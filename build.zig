@@ -60,15 +60,23 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_exe_unit_tests.step);
 }
 
+/// Builds all GLSL shaders in the `src/shaders` directory.
 fn buildShaders(b: *std.Build, dep_sokol: *std.Build.Dependency, dependent: *std.Build.Step) !void {
-    const shaders = [_][]const u8{
-        "triangle",
-    };
+    // Open shaders directory.
+    var dir = try std.fs.cwd().openDir("src/shaders", .{ .iterate = true });
+    defer dir.close();
 
-    for (shaders) |shader| {
-        const input_path = b.fmt("src/shaders/{s}.glsl", .{shader});
-        const output_path = b.fmt("src/shaders/build/{s}.zig", .{shader});
+    // Iterate through all of the items in the directory.
+    var iter = dir.iterate();
+    while (try iter.next()) |item| {
+        // Filter only for shader files.
+        if (item.kind != std.fs.File.Kind.file or !std.mem.endsWith(u8, item.name, ".glsl")) continue;
 
+        // Set the input and output file paths.
+        const input_path = b.fmt("src/shaders/{s}", .{item.name});
+        const output_path = b.fmt("src/shaders/build/{s}.zig", .{item.name});
+
+        // Create the compilation command and bind it to the dependent step.
         dependent.dependOn(&(try sokol.shdc.compile(b, .{
             .dep_shdc = dep_sokol.builder.dependency("shdc", .{}),
             .input = b.path(input_path),

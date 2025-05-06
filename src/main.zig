@@ -8,7 +8,7 @@ const sapp = sokol.app;
 const sglue = sokol.glue;
 
 // Shaders
-const shd = @import("shaders/build/triangle.zig");
+const shd = @import("shaders/build/triangle.glsl.zig");
 
 // Program State
 const state = struct {
