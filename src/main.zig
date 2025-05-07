@@ -11,35 +11,6 @@ const sglue = sokol.glue; // Glues *gfx and *app together.
 // Shaders
 const shd = @import("shaders/build/triangle.glsl.zig"); // Offline cross-compiled shader.
 
-fn makePipelineFromShader(comptime shader: type) sg.Pipeline {
-    // var layout: sg.VertexLayoutState = .{};
-
-    // Store the shader description.
-    const desc = b: {
-        var desc: sg.ShaderDesc = undefined;
-        // Iterate through all of the shader struct's declarations.
-        inline for (@typeInfo(shader).@"struct".decls) |decl| {
-            // Filter for attribute indicies.
-            if (std.mem.endsWith(u8, decl.name, "ShaderDesc")) {
-                desc = @call(.auto, @field(shader, decl.name), .{sg.queryBackend()});
-                break;
-            }
-        }
-        break :b desc;
-    };
-    _ = desc;
-
-    return sg.makePipeline(.{
-        .shader = sg.makeShader(shd.triangleShaderDesc(sg.queryBackend())),
-        .layout = init: {
-            var l = sg.VertexLayoutState{};
-            l.attrs[shd.ATTR_triangle_position].format = .FLOAT3;
-            l.attrs[shd.ATTR_triangle_color0].format = .FLOAT4;
-            break :init l;
-        },
-    });
-}
-
 // Program State
 const state = struct {
     // Resource bindings (buffers, images, shaders, etc.).
@@ -51,7 +22,7 @@ const state = struct {
 };
 
 // Initialization
-export fn init() void {
+export fn onInit() void {
     sg.setup(.{
         // Configure sokol to use sapp's environment via sglue.
         .environment = sglue.environment(),
@@ -87,28 +58,35 @@ export fn init() void {
     };
 }
 
-export fn frame() void {
-    // default pass-action clears to grey
+export fn onFrame() void {
+    defer sg.commit();
     sg.beginPass(.{ .action = state.pass_action, .swapchain = sglue.swapchain() });
-    sg.applyPipeline(state.pip);
-    sg.applyBindings(state.bind);
-    sg.draw(0, 3, 1);
+    {
+        sg.applyPipeline(state.pip);
+        sg.applyBindings(state.bind);
+        sg.draw(0, 3, 1);
+    }
     sg.endPass();
-    sg.commit();
 }
 
-export fn cleanup() void {
+export fn onEvent(event_ptr: [*c]const sapp.Event) void {
+    const event: sapp.Event = event_ptr.*;
+    _ = event;
+    // std.debug.print("Event: {}\n", .{event});
+}
+
+export fn onCleanup() void {
     sg.shutdown();
 }
 
 // -- Main --
 
 pub fn main() void {
-    _ = makePipelineFromShader(shd);
     sapp.run(.{
-        .init_cb = init,
-        .frame_cb = frame,
-        .cleanup_cb = cleanup,
+        .init_cb = onInit,
+        .frame_cb = onFrame,
+        .event_cb = onEvent,
+        .cleanup_cb = onCleanup,
         .width = 1280,
         .height = 720,
         .icon = .{ .sokol_default = true },
