@@ -595,9 +595,15 @@ pub fn triangleStoragebufferSlot(sbuf_name: []const u8) ?usize {
 
 // -- POST-PROCESSING --
 
- pub fn triangleGetVertexLayoutState() sg.VertexLayoutState {
-     var state: sg.VertexLayoutState = .{};
-     state.attrs[ATTR_triangle_position].format = .FLOAT3;
-     state.attrs[ATTR_triangle_color0].format = .FLOAT4;
-     return state;
- }
+pub fn triangleGetVertexLayoutState() sg.VertexLayoutState {
+    var state: sg.VertexLayoutState = .{};
+    state.attrs[ATTR_triangle_position].format = .FLOAT3;
+    state.attrs[ATTR_triangle_color0].format = .FLOAT4;
+    return state;
+}
+pub fn triangleGetPipelineDesc(desc: sg.PipelineDesc) sg.PipelineDesc {
+    var desc_ = desc;
+    desc_.shader = sg.makeShader(triangleShaderDesc(sg.queryBackend()));
+    desc_.layout = triangleGetVertexLayoutState();
+    return desc_;
+}

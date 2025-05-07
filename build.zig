@@ -132,18 +132,30 @@ const PostProcess = struct {
 
         // Function Templates
 
-        const TEMPLATE_GetVertexLayoutState_Pre =
-            \\ pub fn {s}GetVertexLayoutState() sg.VertexLayoutState {{
-            \\     var state: sg.VertexLayoutState = .{{}};
-            \\
-        ;
-        const TEMPLATE_GetVertexLayoutState_Repr =
-            \\     state.attrs[ATTR_{s}_{s}].format = .{s};
-            \\
-        ;
-        const TEMPLATE_GetVertexLayoutState_Post =
-            \\     return state;
-            \\ }}
+        const TEMPLATE_GetVertexLayoutState = struct {
+            const pre =
+                \\pub fn {s}GetVertexLayoutState() sg.VertexLayoutState {{
+                \\    var state: sg.VertexLayoutState = .{{}};
+                \\
+            ;
+            const repr =
+                \\    state.attrs[ATTR_{s}_{s}].format = .{s};
+                \\
+            ;
+            const post =
+                \\    return state;
+                \\}}
+                \\
+            ;
+        };
+
+        const TEMPLATE_GetPipelineDesc =
+            \\pub fn {s}GetPipelineDesc(desc: sg.PipelineDesc) sg.PipelineDesc {{
+            \\    var desc_ = desc;
+            \\    desc_.shader = sg.makeShader({s}ShaderDesc(sg.queryBackend()));
+            \\    desc_.layout = {s}GetVertexLayoutState();
+            \\    return desc_;
+            \\}}
         ;
 
         // ---
@@ -240,11 +252,15 @@ const PostProcess = struct {
             try writer.print("\n// -- POST-PROCESSING --\n\n", .{});
 
             { // GetVertexLayoutState
-                try writer.print(TEMPLATE_GetVertexLayoutState_Pre, .{shader_name});
+                try writer.print(TEMPLATE_GetVertexLayoutState.pre, .{shader_name});
                 for (attrs.items) |attr| {
-                    try writer.print(TEMPLATE_GetVertexLayoutState_Repr, .{ shader_name, attr[0], attr[1].getVertexFormat() });
+                    try writer.print(TEMPLATE_GetVertexLayoutState.repr, .{ shader_name, attr[0], attr[1].getVertexFormat() });
                 }
-                try writer.print(TEMPLATE_GetVertexLayoutState_Post, .{});
+                try writer.print(TEMPLATE_GetVertexLayoutState.post, .{});
+            }
+
+            { // GetPipelineDesc
+                try writer.print(TEMPLATE_GetPipelineDesc, .{shader_name} ** 3);
             }
         }
     }

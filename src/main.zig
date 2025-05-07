@@ -40,16 +40,8 @@ export fn onInit() void {
         }),
     });
 
-    // Create the shader and pipeline objects.
-    state.pip = sg.makePipeline(.{
-        .shader = sg.makeShader(shd.triangleShaderDesc(sg.queryBackend())),
-        .layout = init: {
-            var l = sg.VertexLayoutState{};
-            l.attrs[shd.ATTR_triangle_position].format = .FLOAT3;
-            l.attrs[shd.ATTR_triangle_color0].format = .FLOAT4;
-            break :init l;
-        },
-    });
+    // Create the pipeline.
+    state.pip = sg.makePipeline(shd.triangleGetPipelineDesc(.{}));
 
     // Create a pass action to clear the background to black.
     state.pass_action.colors[0] = .{
