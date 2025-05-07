@@ -2,7 +2,7 @@ const std = @import("std");
 const sokol = @import("sokol");
 
 pub fn build(b: *std.Build) void {
-    // Settings
+    // Options
 
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -33,24 +33,26 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const dep_zlm = b.dependency("zlm", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     dep_sokol.artifact("sokol_clib").addIncludePath(dep_cimgui.path("src"));
 
     exe_mod.addImport("sokol", dep_sokol.module("sokol"));
     exe_mod.addImport("cimgui", dep_cimgui.module("cimgui"));
+    exe_mod.addImport("zlm", dep_zlm.module("zlm"));
 
-    const pp = b.step("post-process", "Adds more functions to shdc built shader files");
+    const pp = b.step("build-shaders", "Builds all of the shaders.");
     pp.* = std.Build.Step.init(.{
         .id = pp.id,
         .name = pp.name,
         .owner = pp.owner,
         .makeFn = PostProcess.postProcessShaders,
     });
+    buildShaders(b, dep_sokol, pp) catch @panic("Failed to create shader build step!");
 
-    const bs = b.step("build-shaders", "Builds all of the shaders.");
-    buildShaders(b, dep_sokol, bs) catch @panic("Failed to create shader build step!");
-
-    pp.dependOn(bs);
     exe.step.dependOn(pp);
 
     // Command: run

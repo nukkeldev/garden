@@ -1,6 +1,6 @@
 // Dependencies
 const std = @import("std");
-const m = @import("math.zig");
+const zlm = @import("zlm");
 const sokol = @import("sokol");
 const ig = @import("cimgui");
 
@@ -11,10 +11,25 @@ const sapp = sokol.app; // Cross-platform application abstraction, handles windo
 const sglue = sokol.glue; // Glues *gfx and *app together.
 const simgui = sokol.imgui; // cimgui interop.
 
-const mat4 = m.Mat4;
+const Mat4 = zlm.Mat4;
+const Vec3 = zlm.Vec3;
 
 // Shaders
 const shd = @import("shaders/build/shader.glsl.zig"); // Offline cross-compiled shader.
+
+// Allocator
+var alloc = std.heap.DebugAllocator(.{}).init;
+
+// Debug Information
+const debug = struct {
+    var zm = Mat4.zero;
+    var rx = Mat4.zero;
+    var ry = Mat4.zero;
+    var rz = Mat4.zero;
+    var model = Mat4.zero;
+    var proj = Mat4.zero;
+    var mvp = Mat4.zero;
+};
 
 // Program State
 const state = struct {
@@ -27,8 +42,10 @@ const state = struct {
 
     // Cube's rotation.
     var r: struct { f32, f32, f32 } = .{ 0.0, 0.0, 0.0 };
+    var zoom: f32 = 1.0;
+
     // View matrix.
-    const view: mat4 = mat4.lookat(.{ .x = 0.0, .y = 1.5, .z = 6.0 }, m.Vec3.zero(), m.Vec3.up());
+    const view = Mat4.createLookAt(zlm.vec3(0.0, 1.5, 6.0), Vec3.zero, Vec3.unitY);
 };
 
 // Initialization
@@ -118,12 +135,25 @@ export fn onFrame() void {
         });
 
         ig.igSetNextWindowPos(.{ .x = 10, .y = 10 }, ig.ImGuiCond_Once);
-        ig.igSetNextWindowSize(.{ .x = 400, .y = 100 }, ig.ImGuiCond_Once);
+        ig.igSetNextWindowSize(.{ .x = 350, .y = 125 }, ig.ImGuiCond_Once);
 
         _ = ig.igBegin("Controls", 0, ig.ImGuiWindowFlags_None);
-        _ = ig.igDragFloat("X", &state.r[0]);
-        _ = ig.igDragFloat("Y", &state.r[1]);
-        _ = ig.igDragFloat("Z", &state.r[2]);
+        _ = ig.igDragFloat3Ex("Rotation (Deg)", &state.r[0], 1, 0, 360, "%0.3f", ig.ImGuiSliderFlags_WrapAround);
+        _ = ig.igDragFloatEx("Zoom", &state.zoom, 0.025, 0.1, 10, "%0.3f", ig.ImGuiSliderFlags_None);
+        _ = ig.igSeparator();
+
+        var debug_str = [_]u8{0} ** 1024;
+        _ = ig.igText(@ptrCast(std.fmt.bufPrint(&debug_str,
+            \\Debug:
+            \\  rx: {}
+            \\  ry: {}
+            \\  rz: {}
+            \\  model: {}
+            \\  view: {}
+            \\  persp: {}
+            \\  mvp: {}
+        , .{ debug.rx, debug.ry, debug.rz, debug.model, state.view, debug.proj, debug.mvp }) catch return));
+
         ig.igEnd();
     }
     // UI end
@@ -134,13 +164,17 @@ export fn onFrame() void {
         // state.r[0] += dt;
         // state.r[1] += dt;
         const vertexParams = b: {
-            const rxm = mat4.rotate(state.r[0], .{ .x = 1.0, .y = 0.0, .z = 0.0 });
-            const rym = mat4.rotate(state.r[1], .{ .x = 0.0, .y = 1.0, .z = 0.0 });
-            const rzm = mat4.rotate(state.r[2], .{ .x = 0.0, .y = 0.0, .z = 1.0 });
-            const model = mat4.mul(mat4.mul(rxm, rym), rzm);
+            debug.zm = Mat4.createUniformScale(state.zoom);
+            debug.rx = Mat4.createAngleAxis(Vec3.unitX, zlm.toRadians(state.r[0]));
+            debug.ry = Mat4.createAngleAxis(Vec3.unitY, zlm.toRadians(state.r[1]));
+            debug.rz = Mat4.createAngleAxis(Vec3.unitZ, zlm.toRadians(state.r[2]));
+            debug.model = Mat4.batchMul(&[_]Mat4{ debug.rx, debug.ry, debug.rz, debug.zm });
+
             const aspect = sapp.widthf() / sapp.heightf();
-            const proj = mat4.persp(60.0, aspect, 0.01, 10.0);
-            break :b shd.VsParams{ .mvp = mat4.mul(mat4.mul(proj, state.view), model) };
+            debug.proj = Mat4.createPerspective(zlm.toRadians(60.0), aspect, 0.01, 10.0);
+            debug.mvp = Mat4.batchMul(&[_]Mat4{ debug.proj, state.view, debug.model });
+
+            break :b shd.VsParams{ .mvp = debug.mvp };
         };
 
         // Render.
