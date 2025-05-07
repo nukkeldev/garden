@@ -1,11 +1,18 @@
+@header const m = @import("../../math.zig")
+@ctype mat4 m.Mat4
+
 @vs vs
+layout(binding = 0) uniform vs_params {
+    mat4 mvp;
+};
+
 in vec3 position;
 in vec4 color0;
 
 out vec4 color;
 
 void main() {
-    gl_Position = vec4(position.xyz, 1);
+    gl_Position = mvp * vec4(position.xyz, 1);
     color = color0;
 }
 @end
@@ -19,4 +26,4 @@ void main() {
 }
 @end
 
-@program triangle vs fs
+@program shader vs fs
