@@ -194,6 +194,12 @@ export fn onFrame() void {
 
 export fn onEvent(event_ptr: [*c]const sapp.Event) void {
     const event: sapp.Event = event_ptr.*;
+
+    if (event.key_code == .Q) {
+        sapp.quit();
+        return;
+    }
+
     _ = simgui.handleEvent(event);
 }
 
