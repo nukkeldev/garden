@@ -41,7 +41,10 @@ pub fn build(b: *std.Build) void {
             .makeFn = PostProcess.postProcessShaders,
         });
 
-        buildShaders(b, dep_sokol, pp) catch @panic("Failed to create shader build step!");
+        const bs = b.step("build-shaders", "Builds all of the shaders.");
+        buildShaders(b, dep_sokol, bs) catch @panic("Failed to create shader build step!");
+
+        pp.dependOn(bs);
         exe.step.dependOn(pp);
     }
 
@@ -73,6 +76,9 @@ fn buildShaders(b: *std.Build, dep_sokol: *std.Build.Dependency, dependent: *std
     // Open shaders directory.
     var dir = try std.fs.cwd().openDir("src/shaders", .{ .iterate = true });
     defer dir.close();
+
+    // Ensure our build directory exists.
+    _ = dir.makeDir("build") catch {};
 
     // Iterate through all of the items in the directory.
     var iter = dir.iterate();
