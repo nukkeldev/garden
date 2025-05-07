@@ -1,9 +1,9 @@
 .{
-    .name = .graphics,
+    .name = .game_engine,
     .version = "0.0.0",
     .minimum_zig_version = "0.14.0",
 
-    .fingerprint = 0xc0c9bc58fdf46f19, // Changing this has security and trust implications.
+    .fingerprint = 0x959db7453d059a35, // Changing this has security and trust implications.
 
     .dependencies = .{
         .sokol = .{
