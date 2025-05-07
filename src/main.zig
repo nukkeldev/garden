@@ -1,13 +1,15 @@
 // Dependencies
 const std = @import("std");
-const sokol = @import("sokol");
 const m = @import("math.zig");
+const sokol = @import("sokol");
+const ig = @import("cimgui");
 
 // Aliases
 const slog = sokol.log; // Default logging callback for sokol internal APIs.
 const sg = sokol.gfx; // 3D-API abstraction, doesn't handle windowing or presentation.
 const sapp = sokol.app; // Cross-platform application abstraction, handles windowing and framebuffer.
 const sglue = sokol.glue; // Glues *gfx and *app together.
+const simgui = sokol.imgui; // cimgui interop.
 
 const mat4 = m.Mat4;
 
@@ -24,7 +26,7 @@ const state = struct {
     var pass_action: sg.PassAction = .{};
 
     // Cube's rotation.
-    var r: struct { f32, f32 } = .{ 0.0, 0.0 };
+    var r: struct { f32, f32, f32 } = .{ 0.0, 0.0, 0.0 };
     // View matrix.
     const view: mat4 = mat4.lookat(.{ .x = 0.0, .y = 1.5, .z = 6.0 }, m.Vec3.zero(), m.Vec3.up());
 };
@@ -37,6 +39,7 @@ export fn onInit() void {
         // Assign slog to be the logging callback.
         .logger = .{ .func = slog.func },
     });
+    simgui.setup(.{ .logger = .{ .func = slog.func } });
 
     // Create a vertex buffer with verticies corresponding to a cube.
     state.bind.vertex_buffers[0] = sg.makeBuffer(.{
@@ -105,37 +108,63 @@ export fn onInit() void {
 }
 
 export fn onFrame() void {
-    const dt: f32 = @floatCast(sapp.frameDuration() * 60);
-    state.r[0] += dt;
-    state.r[1] += dt;
-    const vertexParams = b: {
-        const rxm = mat4.rotate(state.r[0], .{ .x = 1.0, .y = 0.0, .z = 0.0 });
-        const rym = mat4.rotate(state.r[1], .{ .x = 0.0, .y = 1.0, .z = 0.0 });
-        const model = mat4.mul(rxm, rym);
-        const aspect = sapp.widthf() / sapp.heightf();
-        const proj = mat4.persp(60.0, aspect, 0.01, 10.0);
-        break :b shd.VsParams{ .mvp = mat4.mul(mat4.mul(proj, state.view), model) };
-    };
-
-    // Render.
-    defer sg.commit();
-    sg.beginPass(.{ .action = state.pass_action, .swapchain = sglue.swapchain() });
+    // UI
     {
-        sg.applyPipeline(state.pip);
-        sg.applyBindings(state.bind);
-        sg.applyUniforms(shd.UB_vs_params, sg.asRange(&vertexParams));
-        sg.draw(0, 36, 1);
+        simgui.newFrame(.{
+            .width = sapp.width(),
+            .height = sapp.height(),
+            .delta_time = sapp.frameDuration(),
+            .dpi_scale = sapp.dpiScale(),
+        });
+
+        ig.igSetNextWindowPos(.{ .x = 10, .y = 10 }, ig.ImGuiCond_Once);
+        ig.igSetNextWindowSize(.{ .x = 400, .y = 100 }, ig.ImGuiCond_Once);
+
+        _ = ig.igBegin("Controls", 0, ig.ImGuiWindowFlags_None);
+        _ = ig.igDragFloat("X", &state.r[0]);
+        _ = ig.igDragFloat("Y", &state.r[1]);
+        _ = ig.igDragFloat("Z", &state.r[2]);
+        ig.igEnd();
     }
-    sg.endPass();
+    // UI end
+
+    // Rendering
+    {
+        // const dt: f32 = @floatCast(sapp.frameDuration() * 60);
+        // state.r[0] += dt;
+        // state.r[1] += dt;
+        const vertexParams = b: {
+            const rxm = mat4.rotate(state.r[0], .{ .x = 1.0, .y = 0.0, .z = 0.0 });
+            const rym = mat4.rotate(state.r[1], .{ .x = 0.0, .y = 1.0, .z = 0.0 });
+            const rzm = mat4.rotate(state.r[2], .{ .x = 0.0, .y = 0.0, .z = 1.0 });
+            const model = mat4.mul(mat4.mul(rxm, rym), rzm);
+            const aspect = sapp.widthf() / sapp.heightf();
+            const proj = mat4.persp(60.0, aspect, 0.01, 10.0);
+            break :b shd.VsParams{ .mvp = mat4.mul(mat4.mul(proj, state.view), model) };
+        };
+
+        // Render.
+        defer sg.commit();
+        sg.beginPass(.{ .action = state.pass_action, .swapchain = sglue.swapchain() });
+        {
+            sg.applyPipeline(state.pip);
+            sg.applyBindings(state.bind);
+            sg.applyUniforms(shd.UB_vs_params, sg.asRange(&vertexParams));
+            sg.draw(0, 36, 1);
+            simgui.render();
+        }
+        sg.endPass();
+    }
+    // Rendering end
 }
 
 export fn onEvent(event_ptr: [*c]const sapp.Event) void {
     const event: sapp.Event = event_ptr.*;
-    _ = event;
-    // std.debug.print("Event: {}\n", .{event});
+    _ = simgui.handleEvent(event);
 }
 
 export fn onCleanup() void {
+    simgui.shutdown();
     sg.shutdown();
 }
 
