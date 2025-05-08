@@ -33,16 +33,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const dep_zlm = b.dependency("zlm", .{
-        .target = target,
-        .optimize = optimize,
-    });
 
     dep_sokol.artifact("sokol_clib").addIncludePath(dep_cimgui.path("src"));
 
     exe_mod.addImport("sokol", dep_sokol.module("sokol"));
     exe_mod.addImport("cimgui", dep_cimgui.module("cimgui"));
-    exe_mod.addImport("zlm", dep_zlm.module("zlm"));
 
     const pp = b.step("build-shaders", "Builds all of the shaders.");
     pp.* = std.Build.Step.init(.{

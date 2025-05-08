@@ -14,10 +14,6 @@
             .url = "git+https://github.com/floooh/dcimgui.git#716dae9c6a03eec642a4fb2ac28ebcd2f52f76ba",
             .hash = "cimgui-0.1.0-44ClkYmBhgC-Q3NWFyYqwThmmTdmkoIlAjF4ABfyqIAZ",
         },
-        .zlm = .{
-            .url = "git+https://github.com/nukkeldev/zlm.git#eee4d72defe9ccf3d2a2064e51b9c3277d65faeb",
-            .hash = "zlm-0.1.0-3Ln-9rakAAA3v1BBTjN29hVDcl1Do032nWks1Wt50ucq",
-        },
     },
     .paths = .{
         "build.zig",

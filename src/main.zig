@@ -1,6 +1,7 @@
 // Dependencies
 const std = @import("std");
 const zlm = @import("zlm");
+const m = @import("math.zig");
 const sokol = @import("sokol");
 const ig = @import("cimgui");
 
@@ -19,17 +20,6 @@ const shd = @import("shaders/build/shader.glsl.zig"); // Offline cross-compiled 
 
 // Allocator
 var alloc = std.heap.DebugAllocator(.{}).init;
-
-// Debug Information
-const debug = struct {
-    var zm = Mat4.zero;
-    var rx = Mat4.zero;
-    var ry = Mat4.zero;
-    var rz = Mat4.zero;
-    var model = Mat4.zero;
-    var proj = Mat4.zero;
-    var mvp = Mat4.zero;
-};
 
 // Program State
 const state = struct {
@@ -142,18 +132,6 @@ export fn onFrame() void {
         _ = ig.igDragFloatEx("Zoom", &state.zoom, 0.025, 0.1, 10, "%0.3f", ig.ImGuiSliderFlags_None);
         _ = ig.igSeparator();
 
-        var debug_str = [_]u8{0} ** 1024;
-        _ = ig.igText(@ptrCast(std.fmt.bufPrint(&debug_str,
-            \\Debug:
-            \\  rx: {}
-            \\  ry: {}
-            \\  rz: {}
-            \\  model: {}
-            \\  view: {}
-            \\  persp: {}
-            \\  mvp: {}
-        , .{ debug.rx, debug.ry, debug.rz, debug.model, state.view, debug.proj, debug.mvp }) catch return));
-
         ig.igEnd();
     }
     // UI end
@@ -164,17 +142,16 @@ export fn onFrame() void {
         // state.r[0] += dt;
         // state.r[1] += dt;
         const vertexParams = b: {
-            debug.zm = Mat4.createUniformScale(state.zoom);
-            debug.rx = Mat4.createAngleAxis(Vec3.unitX, zlm.toRadians(state.r[0]));
-            debug.ry = Mat4.createAngleAxis(Vec3.unitY, zlm.toRadians(state.r[1]));
-            debug.rz = Mat4.createAngleAxis(Vec3.unitZ, zlm.toRadians(state.r[2]));
-            debug.model = Mat4.batchMul(&[_]Mat4{ debug.rx, debug.ry, debug.rz, debug.zm });
+            const zm = Mat4.createUniformScale(state.zoom);
+            const rx = Mat4.createAngleAxis(Vec3.unitX, zlm.toRadians(state.r[0]));
+            const ry = Mat4.createAngleAxis(Vec3.unitY, zlm.toRadians(state.r[1]));
+            const rz = Mat4.createAngleAxis(Vec3.unitZ, zlm.toRadians(state.r[2]));
+            const model = Mat4.batchMul(&[_]Mat4{ rx, ry, rz, zm });
 
             const aspect = sapp.widthf() / sapp.heightf();
-            debug.proj = Mat4.createPerspective(zlm.toRadians(60.0), aspect, 0.01, 10.0);
-            debug.mvp = Mat4.batchMul(&[_]Mat4{ debug.proj, state.view, debug.model });
+            const proj = Mat4.createPerspective(zlm.toRadians(60.0), aspect, 0.01, 10.0);
 
-            break :b shd.VsParams{ .mvp = debug.mvp };
+            break :b shd.VsParams{ .mvp = Mat4.batchMul(&[_]Mat4{ proj, state.view, model }) };
         };
 
         // Render.
@@ -223,4 +200,13 @@ pub fn main() void {
         .window_title = "game engine",
         .logger = .{ .func = slog.func },
     });
+}
+
+// -- Tests --
+
+test "zlm vs math.zig" {
+    const eql = std.testing.expectEqual;
+
+    // View matrix
+    try eql(m.Mat4.lookat(m.Vec3.new(1, 2, 3), m.Vec3.zero(), m.Vec3.up()).m, Mat4.createLookAt(zlm.vec3(1, 2, 3), Vec3.zero, Vec3.unitY).fields);
 }
