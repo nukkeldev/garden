@@ -1,6 +1,5 @@
 // Dependencies
 const std = @import("std");
-const zlm = @import("zlm");
 const m = @import("math.zig");
 const sokol = @import("sokol");
 const ig = @import("cimgui");
@@ -12,8 +11,8 @@ const sapp = sokol.app; // Cross-platform application abstraction, handles windo
 const sglue = sokol.glue; // Glues *gfx and *app together.
 const simgui = sokol.imgui; // cimgui interop.
 
-const Mat4 = zlm.Mat4;
-const Vec3 = zlm.Vec3;
+const Mat4 = m.Mat4;
+// const Vec3 = zlm.Vec3;
 
 // Shaders
 const shd = @import("shaders/build/shader.glsl.zig"); // Offline cross-compiled shader.
@@ -35,7 +34,7 @@ const state = struct {
     var zoom: f32 = 1.0;
 
     // View matrix.
-    const view = Mat4.createLookAt(zlm.vec3(0.0, 1.5, 6.0), Vec3.zero, Vec3.unitY);
+    // const view = Mat4.createLookAt(zlm.vec3(0.0, 1.5, 6.0), Vec3.zero, Vec3.unitY);
 };
 
 // Initialization
@@ -141,18 +140,18 @@ export fn onFrame() void {
         // const dt: f32 = @floatCast(sapp.frameDuration() * 60);
         // state.r[0] += dt;
         // state.r[1] += dt;
-        const vertexParams = b: {
-            const zm = Mat4.createUniformScale(state.zoom);
-            const rx = Mat4.createAngleAxis(Vec3.unitX, zlm.toRadians(state.r[0]));
-            const ry = Mat4.createAngleAxis(Vec3.unitY, zlm.toRadians(state.r[1]));
-            const rz = Mat4.createAngleAxis(Vec3.unitZ, zlm.toRadians(state.r[2]));
-            const model = Mat4.batchMul(&[_]Mat4{ rx, ry, rz, zm });
+        // const vertexParams = b: {
+        //     const zm = Mat4.createUniformScale(state.zoom);
+        //     const rx = Mat4.createAngleAxis(Vec3.unitX, zlm.toRadians(state.r[0]));
+        //     const ry = Mat4.createAngleAxis(Vec3.unitY, zlm.toRadians(state.r[1]));
+        //     const rz = Mat4.createAngleAxis(Vec3.unitZ, zlm.toRadians(state.r[2]));
+        //     const model = Mat4.batchMul(&[_]Mat4{ rx, ry, rz, zm });
 
-            const aspect = sapp.widthf() / sapp.heightf();
-            const proj = Mat4.createPerspective(zlm.toRadians(60.0), aspect, 0.01, 10.0);
+        //     const aspect = sapp.widthf() / sapp.heightf();
+        //     const proj = Mat4.createPerspective(zlm.toRadians(60.0), aspect, 0.01, 10.0);
 
-            break :b shd.VsParams{ .mvp = Mat4.batchMul(&[_]Mat4{ proj, state.view, model }) };
-        };
+        //     break :b shd.VsParams{ .mvp = Mat4.batchMul(&[_]Mat4{ proj, state.view, model }) };
+        // };
 
         // Render.
         defer sg.commit();
@@ -160,7 +159,7 @@ export fn onFrame() void {
         {
             sg.applyPipeline(state.pip);
             sg.applyBindings(state.bind);
-            sg.applyUniforms(shd.UB_vs_params, sg.asRange(&vertexParams));
+            sg.applyUniforms(shd.UB_vs_params, sg.asRange(&shd.VsParams{ .mvp = Mat4.identity }));
             sg.draw(0, 36, 1);
             simgui.render();
         }
@@ -200,13 +199,4 @@ pub fn main() void {
         .window_title = "game engine",
         .logger = .{ .func = slog.func },
     });
-}
-
-// -- Tests --
-
-test "zlm vs math.zig" {
-    const eql = std.testing.expectEqual;
-
-    // View matrix
-    try eql(m.Mat4.lookat(m.Vec3.new(1, 2, 3), m.Vec3.zero(), m.Vec3.up()).m, Mat4.createLookAt(zlm.vec3(1, 2, 3), Vec3.zero, Vec3.unitY).fields);
 }

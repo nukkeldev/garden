@@ -1,6 +1,6 @@
 const sg = @import("sokol").gfx;
 const std = @import("std");
-const m = @import("zlm");
+const m = @import("../../math.zig");
 //
 //    #version:1# (machine generated, don't edit!)
 //
