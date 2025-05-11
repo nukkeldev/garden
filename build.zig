@@ -1,6 +1,8 @@
 const std = @import("std");
 const sokol = @import("sokol");
 
+var dep_sokol: *std.Build.Dependency = undefined;
+
 pub fn build(b: *std.Build) void {
     // Options
 
@@ -23,7 +25,7 @@ pub fn build(b: *std.Build) void {
 
     // Dependencies
 
-    const dep_sokol = b.dependency("sokol", .{
+    dep_sokol = b.dependency("sokol", .{
         .target = target,
         .optimize = optimize,
         .dynamic_linkage = false,
@@ -39,16 +41,15 @@ pub fn build(b: *std.Build) void {
     exe_mod.addImport("sokol", dep_sokol.module("sokol"));
     exe_mod.addImport("cimgui", dep_cimgui.module("cimgui"));
 
-    const pp = b.step("build-shaders", "Builds all of the shaders.");
-    pp.* = std.Build.Step.init(.{
-        .id = pp.id,
-        .name = pp.name,
-        .owner = pp.owner,
-        .makeFn = PostProcess.postProcessShaders,
+    const build_shaders = b.step("build-shaders", "Builds all of the shaders.");
+    build_shaders.* = std.Build.Step.init(.{
+        .id = build_shaders.id,
+        .name = build_shaders.name,
+        .owner = build_shaders.owner,
+        .makeFn = buildShaders,
     });
-    buildShaders(b, dep_sokol, pp) catch @panic("Failed to create shader build step!");
 
-    exe.step.dependOn(pp);
+    exe.step.dependOn(build_shaders);
 
     // Command: run
 
@@ -74,202 +75,260 @@ pub fn build(b: *std.Build) void {
 }
 
 /// Builds all GLSL shaders in the `src/shaders` directory.
-fn buildShaders(b: *std.Build, dep_sokol: *std.Build.Dependency, dependent: *std.Build.Step) !void {
-    // Open shaders directory.
-    var dir = try std.fs.cwd().openDir("src/shaders", .{ .iterate = true });
-    defer dir.close();
+fn buildShaders(step: *std.Build.Step, options: std.Build.Step.MakeOptions) anyerror!void {
+    const b = step.owner;
+    const alloc = b.allocator;
+    _ = options;
 
-    // Ensure our build directory exists.
-    _ = dir.makeDir("build") catch {};
+    // Open shaders and built-shaders directories.
+    var source_dir = try std.fs.cwd().openDir("src/shaders", .{ .iterate = true });
+    var built_dir = try std.fs.cwd().openDir("src/shaders/build", .{});
+    defer source_dir.close();
+    defer built_dir.close();
 
     // Iterate through all of the items in the directory.
-    var iter = dir.iterate();
-    while (try iter.next()) |item| {
+    var entries = source_dir.iterate();
+    while (try entries.next()) |item| {
         // Filter only for shader files.
         if (item.kind != std.fs.File.Kind.file or !std.mem.endsWith(u8, item.name, ".glsl")) continue;
 
-        // Set the input and output file paths.
-        const input_path = b.fmt("src/shaders/{s}", .{item.name});
-        const output_path = b.fmt("src/shaders/build/{s}.zig", .{item.name});
+        // Open the source file.
+        const source = try source_dir.openFile(item.name, .{});
+        defer source.close();
 
-        // Create the compilation command and bind it to the dependent step.
-        const compile: *std.Build.Step = &(try sokol.shdc.compile(b, .{
-            .dep_shdc = dep_sokol.builder.dependency("shdc", .{}),
-            .input = b.path(input_path),
-            .output = b.path(output_path),
-            .slang = .{
-                .glsl430 = false,
-                .glsl410 = true,
-                .glsl310es = false,
-                .glsl300es = true,
-                .metal_macos = true,
-                .hlsl5 = true,
-                .wgsl = true,
-            },
-            .reflection = true,
-        })).step;
+        // Check if the built file exists.
+        const opt_built: ?std.fs.File = built_dir.openFile(try std.mem.concat(alloc, u8, &[_][]const u8{ item.name, ".zig" }), .{ .mode = .read_write }) catch |e| b: {
+            switch (e) {
+                error.FileNotFound => {
+                    // File has not been built before and therefore needs to be built.
+                    break :b null;
+                },
+                else => return e,
+            }
+        };
 
-        dependent.dependOn(compile);
+        var needs_to_be_built = true;
+        if (opt_built) |built| {
+            // Read the contents of the source and built files.
+            const source_contents = try source.readToEndAlloc(alloc, std.math.maxInt(usize));
+            const built_contents = try built.readToEndAlloc(alloc, std.math.maxInt(usize));
+
+            // Compute the MD5 hash of the shader's contents.
+            const Md5 = std.crypto.hash.Md5;
+            var hash: [Md5.digest_length]u8 = undefined;
+            Md5.hash(source_contents, &hash, .{});
+
+            var hash_str: [Md5.digest_length * 2]u8 = undefined;
+            for (0..hash.len) |i| {
+                _ = try std.fmt.bufPrint(hash_str[2 * i .. 2 * i + 2], "{x:0<2}", .{hash[i]});
+            }
+
+            // Read the previous hash.
+            const last_hash_str = b: {
+                if (std.mem.lastIndexOf(u8, built_contents, "// HASH: ")) |start| {
+                    break :b built_contents[start + 9 .. std.mem.indexOfScalarPos(u8, built_contents, start, '\n') orelse source_contents.len];
+                }
+                break :b built_contents[0..0];
+            };
+
+            // Don't compile if the source hasn't changed.
+            if (std.mem.eql(u8, last_hash_str, &hash_str)) {
+                std.debug.print("{s} has an equivalent hash, skipping...\n", .{item.name});
+                needs_to_be_built = false;
+            } else {
+                std.debug.print("{s} source has changed, recompiling...\n", .{item.name});
+            }
+
+            built.close();
+        }
+
+        // If the file needs to be built then build it.
+        if (needs_to_be_built) {
+            // Set the input and output file paths.
+            const input_path = b.fmt("src/shaders/{s}", .{item.name});
+            const output_path = b.fmt("src/shaders/build/{s}.zig", .{item.name});
+
+            // Create the compilation command.
+            const compile: *std.Build.Step = &(try sokol.shdc.compile(b, .{
+                .dep_shdc = dep_sokol.builder.dependency("shdc", .{}),
+                .input = b.path(input_path),
+                .output = b.path(output_path),
+                .slang = .{
+                    .glsl430 = false,
+                    .glsl410 = true,
+                    .glsl310es = false,
+                    .glsl300es = true,
+                    .metal_macos = true,
+                    .hlsl5 = true,
+                    .wgsl = true,
+                },
+                .reflection = true,
+            })).step;
+
+            // Run the compilation command.
+            try compile.make(.{ .progress_node = undefined, .thread_pool = undefined, .watch = false });
+
+            // Post-process the built file.
+            try postProcessShader(alloc, item.name);
+        }
     }
 }
 
-const PostProcess = struct {
-    // TODO: Merge this step with the compilation step using global variables (perhaps a map keyed by step name) to specify shader files?
-    pub fn postProcessShaders(step: *std.Build.Step, options: std.Build.Step.MakeOptions) anyerror!void {
-        const InputType = enum {
-            vec3,
-            vec4,
+fn postProcessShader(alloc: std.mem.Allocator, file_name: []const u8) !void {
+    const InputType = enum {
+        vec3,
+        vec4,
 
-            const Self = @This();
+        const Self = @This();
 
-            pub fn tagged(name: []const u8) ?Self {
-                inline for (@typeInfo(Self).@"enum".fields) |field| {
-                    if (std.mem.eql(u8, name, field.name)) return @field(Self, field.name);
-                }
-
-                return null;
+        pub fn tagged(name: []const u8) ?Self {
+            inline for (@typeInfo(Self).@"enum".fields) |field| {
+                if (std.mem.eql(u8, name, field.name)) return @field(Self, field.name);
             }
 
-            pub fn getVertexFormat(self: Self) []const u8 {
-                return switch (self) {
-                    .vec3 => "FLOAT3",
-                    .vec4 => "FLOAT4",
-                };
-            }
-        };
+            return null;
+        }
 
-        // Function Templates
+        pub fn getVertexFormat(self: Self) []const u8 {
+            return switch (self) {
+                .vec3 => "FLOAT3",
+                .vec4 => "FLOAT4",
+            };
+        }
+    };
 
-        const TEMPLATE_GetVertexLayoutState = struct {
-            const pre =
-                \\pub fn {s}GetVertexLayoutState() sg.VertexLayoutState {{
-                \\    var state: sg.VertexLayoutState = .{{}};
-                \\
-            ;
-            const repr =
-                \\    state.attrs[ATTR_{s}_{s}].format = .{s};
-                \\
-            ;
-            const post =
-                \\    return state;
-                \\}}
-                \\
-            ;
-        };
+    // Function Templates
 
-        const TEMPLATE_GetPipelineDesc =
-            \\pub fn {s}GetPipelineDesc(desc: sg.PipelineDesc) sg.PipelineDesc {{
-            \\    var desc_ = desc;
-            \\    desc_.shader = sg.makeShader({s}ShaderDesc(sg.queryBackend()));
-            \\    desc_.layout = {s}GetVertexLayoutState();
-            \\    return desc_;
-            \\}}
+    const TEMPLATE_GetVertexLayoutState = struct {
+        const pre =
+            \\pub fn {s}GetVertexLayoutState() sg.VertexLayoutState {{
+            \\    var state: sg.VertexLayoutState = .{{}};
+            \\
         ;
+        const repr =
+            \\    state.attrs[ATTR_{s}_{s}].format = .{s};
+            \\
+        ;
+        const post =
+            \\    return state;
+            \\}}
+            \\
+        ;
+    };
 
-        // ---
+    const TEMPLATE_GetPipelineDesc =
+        \\pub fn {s}GetPipelineDesc(desc: sg.PipelineDesc) sg.PipelineDesc {{
+        \\    var desc_ = desc;
+        \\    desc_.shader = sg.makeShader({s}ShaderDesc(sg.queryBackend()));
+        \\    desc_.layout = {s}GetVertexLayoutState();
+        \\    return desc_;
+        \\}}
+        \\
+    ;
 
-        const alloc = step.owner.allocator;
-        _ = options;
+    // ---
 
-        // Open shaders and built-shaders directories.
-        var source_dir = try std.fs.cwd().openDir("src/shaders", .{ .iterate = true });
-        var built_dir = try std.fs.cwd().openDir("src/shaders/build", .{});
-        defer source_dir.close();
-        defer built_dir.close();
+    // Open shaders and built-shaders directories.
+    var source_dir = try std.fs.cwd().openDir("src/shaders", .{ .iterate = true });
+    var built_dir = try std.fs.cwd().openDir("src/shaders/build", .{});
+    defer source_dir.close();
+    defer built_dir.close();
 
-        // Iterate through all of the items in the directory.
-        var entries = source_dir.iterate();
-        while (try entries.next()) |item| {
-            // Filter only for shader files.
-            if (item.kind != std.fs.File.Kind.file or !std.mem.endsWith(u8, item.name, ".glsl")) continue;
+    // Open the source file for reading.
+    const source = try source_dir.openFile(file_name, .{});
+    defer source.close();
 
-            // Open the source file.
-            const file = try source_dir.openFile(item.name, .{});
-            defer file.close();
+    // Open the built file for reading and writing.
+    const built = try built_dir.openFile(try std.mem.concat(alloc, u8, &[_][]const u8{ file_name, ".zig" }), .{ .mode = .read_write });
+    defer built.close();
 
-            // Check if the built file exists.
-            const built = built_dir.openFile(try std.mem.concat(alloc, u8, &[_][]const u8{ item.name, ".zig" }), .{ .mode = .read_write }) catch |e| {
-                std.log.err("Shader '{s}' has not been built; cannot post-process!\n", .{item.name});
-                return e;
-            };
-            defer built.close();
+    // Read the contents of the source file.
+    const source_contents = try source.readToEndAlloc(alloc, std.math.maxInt(usize));
 
-            // Read the contents of the source file.
-            const contents = try file.readToEndAlloc(alloc, std.math.maxInt(usize));
+    // Compute the MD5 hash of the shader's contents (again).
+    const Md5 = std.crypto.hash.Md5;
+    var hash: [Md5.digest_length]u8 = undefined;
+    Md5.hash(source_contents, &hash, .{});
 
-            // Get the shader name.
-            const shader_name = b: {
-                const start = std.mem.indexOf(u8, contents, "@program").?;
-                const line = contents[(start + "@program".len)..std.mem.indexOfPos(u8, contents, start, "\n").?];
+    var hash_str: [Md5.digest_length * 2]u8 = undefined;
+    for (0..hash.len) |i| {
+        _ = try std.fmt.bufPrint(hash_str[2 * i .. 2 * i + 2], "{x:0<2}", .{hash[i]});
+    }
 
-                var tokens = std.mem.tokenizeScalar(u8, line, ' ');
-                break :b tokens.next().?;
-            };
+    // Get the shader name.
+    const shader_name = b: {
+        const start = std.mem.indexOf(u8, source_contents, "@program").?;
+        const line = source_contents[(start + "@program".len)..std.mem.indexOfScalarPos(u8, source_contents, start, '\n').?];
 
-            // Filter to just the vertex shader; we can assume syntactically valid 'annotated glsl'.
-            const vs = b: {
-                // Find the start of the @vs annotation.
-                var start = std.mem.indexOf(u8, contents, "@vs").?;
-                // Skip to the next line.
-                start = std.mem.indexOfPos(u8, contents, start, "\n").? + 1;
+        var tokens = std.mem.tokenizeScalar(u8, line, ' ');
+        break :b tokens.next().?;
+    };
 
-                break :b contents[start..std.mem.indexOfPos(u8, contents, start, "@end").?];
-            };
+    // Filter to just the vertex shader; we can assume syntactically valid 'annotated glsl'.
+    const vs = b: {
+        // Find the start of the @vs annotation.
+        var start = std.mem.indexOf(u8, source_contents, "@vs").?;
+        // Skip to the next line.
+        start = std.mem.indexOfScalarPos(u8, source_contents, start, '\n').? + 1;
 
-            // Parse the inputs to the vertex shader.
-            var attrs = std.ArrayList(struct { []const u8, InputType }).init(alloc);
-            defer attrs.deinit();
+        break :b source_contents[start..std.mem.indexOfPos(u8, source_contents, start, "@end").?];
+    };
 
-            // TODO: Would be better to split by semicolon.
-            var lines = std.mem.splitScalar(u8, vs, '\n');
-            while (lines.next()) |line| {
-                if (std.mem.startsWith(u8, line, "in")) {
-                    var tokens = std.mem.tokenizeScalar(u8, line, ' ');
-                    _ = tokens.next(); // Ignore the "in".
+    // Parse the inputs to the vertex shader.
+    var attrs = std.ArrayList(struct { []const u8, InputType }).init(alloc);
+    defer attrs.deinit();
 
-                    // Parse the type and name from the next two tokens.
-                    const ty = b: {
-                        const raw = tokens.next().?;
-                        const ty = InputType.tagged(raw);
-                        if (ty == null) {
-                            std.log.err("Unknown input type: '{s}'! Ignoring...\n", .{raw});
-                            continue;
-                        }
+    // TODO: Would be better to split by semicolon.
+    var lines = std.mem.splitScalar(u8, vs, '\n');
+    while (lines.next()) |line| {
+        if (std.mem.startsWith(u8, line, "in")) {
+            var tokens = std.mem.tokenizeScalar(u8, line, ' ');
+            _ = tokens.next(); // Ignore the "in".
 
-                        break :b ty.?;
-                    };
-                    const name = b: {
-                        var name = tokens.next().?;
-                        if (std.mem.endsWith(u8, name, ";")) {
-                            name = name[0 .. name.len - 1];
-                        }
-                        break :b name;
-                    };
-                    const input = .{ name, ty };
-
-                    // Append the parsed input to the attribute list.
-                    try attrs.append(input);
+            // Parse the type and name from the next two tokens.
+            const ty = b: {
+                const raw = tokens.next().?;
+                const ty = InputType.tagged(raw);
+                if (ty == null) {
+                    std.log.err("Unknown input type: '{s}'! Ignoring...\n", .{raw});
+                    continue;
                 }
-            }
 
-            // Append the new function templates to the end of the built file.
-            try built.seekFromEnd(0);
-            const writer = built.writer();
-
-            // Indicate the below functions to be generated by us.
-            try writer.print("\n// -- POST-PROCESSING --\n\n", .{});
-
-            { // GetVertexLayoutState
-                try writer.print(TEMPLATE_GetVertexLayoutState.pre, .{shader_name});
-                for (attrs.items) |attr| {
-                    try writer.print(TEMPLATE_GetVertexLayoutState.repr, .{ shader_name, attr[0], attr[1].getVertexFormat() });
+                break :b ty.?;
+            };
+            const name = b: {
+                var name = tokens.next().?;
+                if (std.mem.endsWith(u8, name, ";")) {
+                    name = name[0 .. name.len - 1];
                 }
-                try writer.print(TEMPLATE_GetVertexLayoutState.post, .{});
-            }
+                break :b name;
+            };
+            const input = .{ name, ty };
 
-            { // GetPipelineDesc
-                try writer.print(TEMPLATE_GetPipelineDesc, .{shader_name} ** 3);
-            }
+            // Append the parsed input to the attribute list.
+            try attrs.append(input);
         }
     }
-};
+
+    // Append the new function templates to the end of the built file.
+    try built.seekFromEnd(0);
+    const writer = built.writer();
+
+    // Indicate the below functions to be generated by us.
+    try writer.print("\n// -- POST-PROCESSING --\n\n", .{});
+
+    { // GetVertexLayoutState
+        try writer.print(TEMPLATE_GetVertexLayoutState.pre, .{shader_name});
+        for (attrs.items) |attr| {
+            try writer.print(TEMPLATE_GetVertexLayoutState.repr, .{ shader_name, attr[0], attr[1].getVertexFormat() });
+        }
+        try writer.print(TEMPLATE_GetVertexLayoutState.post, .{});
+    }
+
+    { // GetPipelineDesc
+        try writer.print(TEMPLATE_GetPipelineDesc, .{shader_name} ** 3);
+    }
+
+    // Write the shader's content hash for change diffing.
+    try writer.print("// HASH: {s}\n", .{hash_str});
+}
