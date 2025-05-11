@@ -142,7 +142,8 @@ export fn onFrame() void {
 
     // Rendering
     {
-        // const dt: f32 = @floatCast(sapp.frameDuration() * 60);
+        const dt: f32 = @floatCast(sapp.frameDuration());
+        state.r[2] += std.math.pi * dt;
         // state.r[0] += dt;
         // state.r[1] += dt;
         // const vertexParams = b: {
@@ -163,7 +164,7 @@ export fn onFrame() void {
         {
             sg.applyPipeline(state.pip);
             sg.applyBindings(state.bind);
-            sg.applyUniforms(shd.UB_vs_params, sg.asRange(&shd.VsParams{ .mvp = Mat4.scale(2, 1, 1) }));
+            sg.applyUniforms(shd.UB_vs_params, sg.asRange(&shd.VsParams{ .mvp = Mat4.rotateZ(state.r[2]) }));
             sg.draw(0, 3, 1);
             simgui.render();
         }
@@ -197,7 +198,7 @@ pub fn main() void {
         .frame_cb = onFrame,
         .event_cb = onEvent,
         .cleanup_cb = onCleanup,
-        .width = 1280,
+        .width = 720,
         .height = 720,
         .sample_count = 4,
         .icon = .{ .sokol_default = true },

@@ -71,6 +71,55 @@ pub fn Mat(comptime T: type, N: comptime_int, M: comptime_int) type {
             } };
         }
 
+        pub fn translation(x: T, y: T, z: T) Self {
+            return Self{ .m = [COLS][ROWS]T{
+                .{ 1, 0, 0, x },
+                .{ 0, 1, 0, y },
+                .{ 0, 0, 1, z },
+                .{ 0, 0, 0, 1 },
+            } };
+        }
+
+        pub fn rotateX(radians: T) Self {
+            // zig fmt: off
+            return Self{ .m = [COLS][ROWS]T{
+                .{ 1,             0,              0, 0 },
+                .{ 0, @cos(radians), -@sin(radians), 0 },
+                .{ 0, @sin(radians),  @cos(radians), 0 },
+                .{ 0,             0,              0, 1 },
+            } };
+            // zig fmt: on
+        }
+
+        pub fn rotateY(radians: T) Self {
+            // zig fmt: off
+            return Self{ .m = [COLS][ROWS]T{
+                .{  @cos(radians), 0, @sin(radians), 0 },
+                .{              0, 1,             0, 0 },
+                .{ -@sin(radians), 0, @cos(radians), 0 },
+                .{              0, 0,             0, 1 },
+            } };
+            // zig fmt: on
+        }
+
+        pub fn rotateZ(radians: T) Self {
+            // zig fmt: off
+            return Self{ .m = [COLS][ROWS]T{
+                .{ @cos(radians), -@sin(radians), 0, 0 },
+                .{ @sin(radians),  @cos(radians), 0, 0 },
+                .{             0,              0, 1, 0 },
+                .{             0,              0, 0, 1 },
+            } };
+            // zig fmt: on
+        }
+
+        pub fn _rotateAround(axis: Mat(T, N, 1), radians: T) Self {
+            _ = axis;
+            _ = radians;
+
+            @panic("Not yet implemented.");
+        }
+
         // Lower-Level Interactions
 
         /// Sets the matrix's element at [`row`, `column`] to `value`.
