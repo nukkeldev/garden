@@ -12,6 +12,8 @@ pub fn Mat(comptime T: type, N: comptime_int, M: comptime_int) type {
 
         const Self = @This();
 
+        // Constants
+
         pub const zero = Self{ .m = [1][N]T{.{0} ** N} ** M };
         pub const one = Self{ .m = [1][N]T{.{1} ** N} ** M };
 
@@ -24,6 +26,8 @@ pub fn Mat(comptime T: type, N: comptime_int, M: comptime_int) type {
             }
             break :b res;
         };
+
+        // Operations
 
         /// Returns the matrix multiplication of A, an N x M matrix, and B, an M x P matrix.
         pub fn mul(A: anytype, B: anytype) getProductType(@TypeOf(A), @TypeOf(B)) {
@@ -56,6 +60,19 @@ pub fn Mat(comptime T: type, N: comptime_int, M: comptime_int) type {
             return result;
         }
 
+        // Helper Functions
+
+        pub fn scale(x: T, y: T, z: T) Self {
+            return Self{ .m = [COLS][ROWS]T{
+                .{ x, 0, 0, 0 },
+                .{ 0, y, 0, 0 },
+                .{ 0, 0, z, 0 },
+                .{ 0, 0, 0, 1 },
+            } };
+        }
+
+        // Lower-Level Interactions
+
         /// Sets the matrix's element at [`row`, `column`] to `value`.
         pub fn set(self: *Self, col: usize, row: usize, value: T) void {
             self.m[col][row] = value;
@@ -65,6 +82,8 @@ pub fn Mat(comptime T: type, N: comptime_int, M: comptime_int) type {
         pub fn get(self: *const Self, col: usize, row: usize) T {
             return self.m[col][row];
         }
+
+        // Comptime Checks
 
         /// Expects `ty` to be a matrix type (or a pointer of one).
         fn expectMatrix(comptime ty: type) type {

@@ -12,7 +12,7 @@ const sglue = sokol.glue; // Glues *gfx and *app together.
 const simgui = sokol.imgui; // cimgui interop.
 
 const Mat4 = m.Mat4;
-// const Vec3 = zlm.Vec3;
+const Vec4 = m.Vec4;
 
 // Shaders
 const shd = @import("shaders/build/shader.glsl.zig"); // Offline cross-compiled shader.
@@ -47,58 +47,63 @@ export fn onInit() void {
     });
     simgui.setup(.{ .logger = .{ .func = slog.func } });
 
-    // Create a vertex buffer with verticies corresponding to a cube.
+    // Create a vertex buffer with verticies corresponding to a triangle.
     state.bind.vertex_buffers[0] = sg.makeBuffer(.{
+        // zig fmt: off
         .data = sg.asRange(&[_]f32{
-            // positions......colors
-            -1.0, -1.0, -1.0, 1.0, 0.0, 0.0, 1.0,
-            1.0,  -1.0, -1.0, 1.0, 0.0, 0.0, 1.0,
-            1.0,  1.0,  -1.0, 1.0, 0.0, 0.0, 1.0,
-            -1.0, 1.0,  -1.0, 1.0, 0.0, 0.0, 1.0,
+            // positions.....colors
+             0.0,  0.5, 1.0, 1.0, 0.0, 0.0, 1.0,
+             0.5, -0.5, 1.0, 0.0, 0.0, 1.0, 1.0,
+            -0.5, -0.5, 1.0, 0.0, 1.0, 0.0, 1.0,
+            // -0.0, -1.0, -1.0, 1.0, 0.0, 0.0, 1.0,
+            // 1.0,  -1.0, -1.0, 1.0, 0.0, 0.0, 1.0,
+            // 1.0,  1.0,  -1.0, 1.0, 0.0, 0.0, 1.0,
+            // -1.0, 1.0,  -1.0, 1.0, 0.0, 0.0, 1.0,
 
-            -1.0, -1.0, 1.0,  0.0, 1.0, 0.0, 1.0,
-            1.0,  -1.0, 1.0,  0.0, 1.0, 0.0, 1.0,
-            1.0,  1.0,  1.0,  0.0, 1.0, 0.0, 1.0,
-            -1.0, 1.0,  1.0,  0.0, 1.0, 0.0, 1.0,
+            // -1.0, -1.0, 1.0,  0.0, 1.0, 0.0, 1.0,
+            // 1.0,  -1.0, 1.0,  0.0, 1.0, 0.0, 1.0,
+            // 1.0,  1.0,  1.0,  0.0, 1.0, 0.0, 1.0,
+            // -1.0, 1.0,  1.0,  0.0, 1.0, 0.0, 1.0,
 
-            -1.0, -1.0, -1.0, 0.0, 0.0, 1.0, 1.0,
-            -1.0, 1.0,  -1.0, 0.0, 0.0, 1.0, 1.0,
-            -1.0, 1.0,  1.0,  0.0, 0.0, 1.0, 1.0,
-            -1.0, -1.0, 1.0,  0.0, 0.0, 1.0, 1.0,
+            // -1.0, -1.0, -1.0, 0.0, 0.0, 1.0, 1.0,
+            // -1.0, 1.0,  -1.0, 0.0, 0.0, 1.0, 1.0,
+            // -1.0, 1.0,  1.0,  0.0, 0.0, 1.0, 1.0,
+            // -1.0, -1.0, 1.0,  0.0, 0.0, 1.0, 1.0,
 
-            1.0,  -1.0, -1.0, 1.0, 0.5, 0.0, 1.0,
-            1.0,  1.0,  -1.0, 1.0, 0.5, 0.0, 1.0,
-            1.0,  1.0,  1.0,  1.0, 0.5, 0.0, 1.0,
-            1.0,  -1.0, 1.0,  1.0, 0.5, 0.0, 1.0,
+            // 1.0,  -1.0, -1.0, 1.0, 0.5, 0.0, 1.0,
+            // 1.0,  1.0,  -1.0, 1.0, 0.5, 0.0, 1.0,
+            // 1.0,  1.0,  1.0,  1.0, 0.5, 0.0, 1.0,
+            // 1.0,  -1.0, 1.0,  1.0, 0.5, 0.0, 1.0,
 
-            -1.0, -1.0, -1.0, 0.0, 0.5, 1.0, 1.0,
-            -1.0, -1.0, 1.0,  0.0, 0.5, 1.0, 1.0,
-            1.0,  -1.0, 1.0,  0.0, 0.5, 1.0, 1.0,
-            1.0,  -1.0, -1.0, 0.0, 0.5, 1.0, 1.0,
+            // -1.0, -1.0, -1.0, 0.0, 0.5, 1.0, 1.0,
+            // -1.0, -1.0, 1.0,  0.0, 0.5, 1.0, 1.0,
+            // 1.0,  -1.0, 1.0,  0.0, 0.5, 1.0, 1.0,
+            // 1.0,  -1.0, -1.0, 0.0, 0.5, 1.0, 1.0,
 
-            -1.0, 1.0,  -1.0, 1.0, 0.0, 0.5, 1.0,
-            -1.0, 1.0,  1.0,  1.0, 0.0, 0.5, 1.0,
-            1.0,  1.0,  1.0,  1.0, 0.0, 0.5, 1.0,
-            1.0,  1.0,  -1.0, 1.0, 0.0, 0.5, 1.0,
+            // -1.0, 1.0,  -1.0, 1.0, 0.0, 0.5, 1.0,
+            // -1.0, 1.0,  1.0,  1.0, 0.0, 0.5, 1.0,
+            // 1.0,  1.0,  1.0,  1.0, 0.0, 0.5, 1.0,
+            // 1.0,  1.0,  -1.0, 1.0, 0.0, 0.5, 1.0,
         }),
+        // zig fmt: on
     });
 
     // Create the index buffer for the cube's verticies.
-    state.bind.index_buffer = sg.makeBuffer(.{
-        .type = .INDEXBUFFER,
-        .data = sg.asRange(&[_]u16{
-            0,  1,  2,  0,  2,  3,
-            6,  5,  4,  7,  6,  4,
-            8,  9,  10, 8,  10, 11,
-            14, 13, 12, 15, 14, 12,
-            16, 17, 18, 16, 18, 19,
-            22, 21, 20, 23, 22, 20,
-        }),
-    });
+    // state.bind.index_buffer = sg.makeBuffer(.{
+    //     .type = .INDEXBUFFER,
+    //     .data = sg.asRange(&[_]u16{
+    //         0,  1,  2,  0,  2,  3,
+    //         6,  5,  4,  7,  6,  4,
+    //         8,  9,  10, 8,  10, 11,
+    //         14, 13, 12, 15, 14, 12,
+    //         16, 17, 18, 16, 18, 19,
+    //         22, 21, 20, 23, 22, 20,
+    //     }),
+    // });
 
     // Create the pipeline.
     state.pip = sg.makePipeline(shd.shaderGetPipelineDesc(.{
-        .index_type = .UINT16,
+        // .index_type = .UINT16,
         .depth = .{
             .compare = .LESS_EQUAL,
             .write_enabled = true,
@@ -154,16 +159,16 @@ export fn onFrame() void {
         // };
 
         // Render.
-        defer sg.commit();
         sg.beginPass(.{ .action = state.pass_action, .swapchain = sglue.swapchain() });
         {
             sg.applyPipeline(state.pip);
             sg.applyBindings(state.bind);
-            sg.applyUniforms(shd.UB_vs_params, sg.asRange(&shd.VsParams{ .mvp = Mat4.identity }));
-            sg.draw(0, 36, 1);
+            sg.applyUniforms(shd.UB_vs_params, sg.asRange(&shd.VsParams{ .mvp = Mat4.scale(2, 1, 1) }));
+            sg.draw(0, 3, 1);
             simgui.render();
         }
         sg.endPass();
+        sg.commit();
     }
     // Rendering end
 }
