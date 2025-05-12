@@ -41,6 +41,9 @@
               zls
               zig_0_14
 
+              # slang
+              shader-slang
+
               # sokol-zig
               alsa-lib
               libGL
