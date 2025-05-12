@@ -1,0 +1,12 @@
+.{
+    .name = .shader_compiler,
+    .version = "0.0.1",
+    .fingerprint = 0x36d3f5d9665d5434, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.14.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
