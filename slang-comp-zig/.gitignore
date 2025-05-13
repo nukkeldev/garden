@@ -1,0 +1,6 @@
+slang/*
+!slang/build.zig
+!slang/build.zig.zon
+
+zig-out/
+.zig-cache/
