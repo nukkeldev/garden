@@ -14,6 +14,10 @@
             .url = "git+https://github.com/floooh/dcimgui.git#716dae9c6a03eec642a4fb2ac28ebcd2f52f76ba",
             .hash = "cimgui-0.1.0-44ClkYmBhgC-Q3NWFyYqwThmmTdmkoIlAjF4ABfyqIAZ",
         },
+        .HMM = .{
+            .url = "git+https://github.com/HandmadeMath/HandmadeMath#142ba3cd9da700e3e599d301bbd27d415ad14626",
+            .hash = "N-V-__8AAKcABACNMJ-W931ffS-WKtSh_CIihaf1Y3rlPBF2",
+        },
     },
     .paths = .{
         "build.zig",

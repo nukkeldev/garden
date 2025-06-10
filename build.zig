@@ -41,15 +41,17 @@ pub fn build(b: *std.Build) void {
     exe_mod.addImport("sokol", dep_sokol.module("sokol"));
     exe_mod.addImport("cimgui", dep_cimgui.module("cimgui"));
 
-    const build_shaders = b.step("build-shaders", "Builds all of the shaders.");
-    build_shaders.* = std.Build.Step.init(.{
-        .id = build_shaders.id,
-        .name = build_shaders.name,
-        .owner = build_shaders.owner,
-        .makeFn = buildShaders,
-    });
+    exe_mod.addIncludePath(b.dependency("HMM", .{}).path("."));
 
-    exe.step.dependOn(build_shaders);
+    // const build_shaders = b.step("build-shaders", "Builds all of the shaders.");
+    // build_shaders.* = std.Build.Step.init(.{
+    //     .id = build_shaders.id,
+    //     .name = build_shaders.name,
+    //     .owner = build_shaders.owner,
+    //     .makeFn = buildShaders,
+    // });
+
+    // exe.step.dependOn(build_shaders);
 
     // Command: run
 

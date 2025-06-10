@@ -1,8 +1,11 @@
 // Dependencies
 const std = @import("std");
-const m = @import("math.zig");
 const sokol = @import("sokol");
 const ig = @import("cimgui");
+
+const hmm = @cImport({
+    @cInclude("HandmadeMath.h");
+});
 
 // Aliases
 const slog = sokol.log; // Default logging callback for sokol internal APIs.
@@ -11,11 +14,11 @@ const sapp = sokol.app; // Cross-platform application abstraction, handles windo
 const sglue = sokol.glue; // Glues *gfx and *app together.
 const simgui = sokol.imgui; // cimgui interop.
 
-const Mat4 = m.Mat4;
-const Vec4 = m.Vec4;
+const Mat4 = hmm.HMM_Mat4;
+const Vec4 = hmm.HMM_Vec4;
 
 // Shaders
-const shd = @import("shaders/build/shader.glsl.zig"); // Offline cross-compiled shader.
+// const shd = @import("shaders/build/shader.glsl.zig"); // Offline cross-compiled shader.
 
 // Allocator
 var alloc = std.heap.DebugAllocator(.{}).init;
@@ -52,9 +55,9 @@ export fn onInit() void {
         // zig fmt: off
         .data = sg.asRange(&[_]f32{
             // positions.....colors
-             0.0,  0.5, 1.0, 1.0, 0.0, 0.0, 1.0,
-             0.5, -0.5, 1.0, 0.0, 0.0, 1.0, 1.0,
-            -0.5, -0.5, 1.0, 0.0, 1.0, 0.0, 1.0,
+             0.0,  0.5, 1.0, 1.0, 0.0, 0.0,
+             0.5, -0.5, 1.0, 0.0, 0.0, 1.0,
+            -0.5, -0.5, 1.0, 0.0, 1.0, 0.0,
             // -0.0, -1.0, -1.0, 1.0, 0.0, 0.0, 1.0,
             // 1.0,  -1.0, -1.0, 1.0, 0.0, 0.0, 1.0,
             // 1.0,  1.0,  -1.0, 1.0, 0.0, 0.0, 1.0,
@@ -101,21 +104,14 @@ export fn onInit() void {
     //     }),
     // });
 
-    // Create the pipeline.
-    state.pip = sg.makePipeline(shd.shaderGetPipelineDesc(.{
-        // .index_type = .UINT16,
-        .depth = .{
-            .compare = .LESS_EQUAL,
-            .write_enabled = true,
-        },
-        .cull_mode = .BACK,
-    }));
-
     // Create a pass action to clear the background to black.
     state.pass_action.colors[0] = .{
         .load_action = .CLEAR,
         .clear_value = .{ .r = 0, .g = 0, .b = 0, .a = 1 },
     };
+
+    // Load the pipeline.
+    loadPipeline();
 }
 
 export fn onFrame() void {
@@ -142,8 +138,8 @@ export fn onFrame() void {
 
     // Rendering
     {
-        const dt: f32 = @floatCast(sapp.frameDuration());
-        state.r[2] += std.math.pi * dt;
+        // const dt: f32 = @floatCast(sapp.frameDuration());
+        // state.r[2] += std.math.pi * dt;
         // state.r[0] += dt;
         // state.r[1] += dt;
         // const vertexParams = b: {
@@ -164,7 +160,6 @@ export fn onFrame() void {
         {
             sg.applyPipeline(state.pip);
             sg.applyBindings(state.bind);
-            sg.applyUniforms(shd.UB_vs_params, sg.asRange(&shd.VsParams{ .mvp = Mat4.rotateZ(state.r[2]) }));
             sg.draw(0, 3, 1);
             simgui.render();
         }
@@ -188,6 +183,54 @@ export fn onEvent(event_ptr: [*c]const sapp.Event) void {
 export fn onCleanup() void {
     simgui.shutdown();
     sg.shutdown();
+}
+
+fn loadPipeline() void {
+    const backend = sg.queryBackend();
+    std.log.info("Creating pipeline for backend: {}", .{backend});
+
+    const shader = outer: switch (backend) {
+        .GLCORE => {
+            // TODO: Load from file.
+            const vert_shader = @embedFile("shaders/shader.vert.glsl");
+            const frag_shader = @embedFile("shaders/shader.frag.glsl");
+
+            var desc = sg.ShaderDesc{
+                .label = "Shader",
+                .vertex_func = .{
+                    .source = vert_shader,
+                    .entry = "vertexMain",
+                },
+                .fragment_func = .{
+                    .source = frag_shader,
+                    .entry = "fragmentMain",
+                },
+            };
+
+            desc.attrs[0].base_type = .FLOAT;
+            desc.attrs[0].glsl_name = "assembledVertex_position_0";
+            desc.attrs[1].base_type = .FLOAT;
+            desc.attrs[1].glsl_name = "assembledVertex_color_0";
+
+            break :outer sg.makeShader(desc);
+        },
+        else => std.debug.panic("Unsupported backend: {}!", .{backend}),
+    };
+
+    state.pip = sg.makePipeline(.{
+        .shader = shader,
+        .layout = init: {
+            var l = sg.VertexLayoutState{};
+            l.attrs[0].format = .FLOAT3;
+            l.attrs[1].format = .FLOAT3;
+            break :init l;
+        },
+        .depth = .{
+            .compare = .LESS_EQUAL,
+            .write_enabled = true,
+        },
+        .cull_mode = .BACK,
+    });
 }
 
 // -- Main --

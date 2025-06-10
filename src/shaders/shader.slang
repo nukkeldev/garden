@@ -1,8 +1,8 @@
 // Uniform data to be passed from application -> shader.
-cbuffer Uniforms
-{
-    float4x4 modelViewProjection;
-}
+// cbuffer Uniforms
+// {
+//   float4x4 modelViewProjection;
+// }
 
 // Per-vertex attributes to be assembled from bound vertex buffers.
 struct AssembledVertex
@@ -41,7 +41,7 @@ VertexStageOutput vertexMain(
     float3 color    = assembledVertex.color;
 
     output.coarseVertex.color = color;
-    output.sv_position = mul(modelViewProjection, float4(position, 1.0));
+    output.sv_position = float4(position, 1.0); // mul(modelViewProjection, float4(position, 1.0));
 
     return output;
 }
