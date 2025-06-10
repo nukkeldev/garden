@@ -18,27 +18,30 @@ pub fn build(b: *std.Build) !void {
     });
 
     const exe = b.addExecutable(.{
-        .name = "graphics",
+        .name = "garden",
         .root_module = exe_mod,
     });
     b.installArtifact(exe);
 
     // Dependencies
 
-    dep_sokol = b.dependency("sokol", .{
+    const dep_sdl = b.dependency("sdl", .{
         .target = target,
         .optimize = optimize,
-        .dynamic_linkage = false,
-        .with_sokol_imgui = true,
+        //.preferred_linkage = .dynamic,
+        //.strip = null,
+        //.sanitize_c = null,
+        //.pic = null,
+        //.lto = null,
+        //.emscripten_pthreads = false,
+        //.install_build_config_h = false,
     });
     const dep_cimgui = b.dependency("cimgui", .{
         .target = target,
         .optimize = optimize,
     });
 
-    dep_sokol.artifact("sokol_clib").addIncludePath(dep_cimgui.path("src"));
-
-    exe_mod.addImport("sokol", dep_sokol.module("sokol"));
+    exe_mod.linkLibrary(dep_sdl.artifact("SDL3"));
     exe_mod.addImport("cimgui", dep_cimgui.module("cimgui"));
 
     const zm = b.dependency("zm", .{});
