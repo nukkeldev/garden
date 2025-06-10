@@ -33,40 +33,8 @@
               # slang
               shader-slang
 
-              glibc
-
-              # Audio backends
-              alsa-lib # ALSA (libasound2)
-              pulseaudio # PulseAudio (libpulse0)
-              jack2 # JACK (libjack0)
-              sndio # sndio
-              # (OSS support is typically handled by alsa-lib’s OSS plugin)
-
-              # X11 video & input
-              xorg.libX11
-              xorg.libXext
-              xorg.libXrandr
-              xorg.libXcursor
-              xorg.libXfixes
-              xorg.libXi
-              libxkbcommon
-              udev # libudev device enumeration
-              ibus # Input Method support
-
-              # Hardware‐accelerated graphics
-              libdrm # DRM/GBM
-              libgbm
-              mesa # libGL, OpenGL/EGL/GLES
-              vulkan-loader # Vulkan loader
-
-              # “Recommends”-style deps (nice to have)
-              dbus
-              libayatana-appindicator # app indicator support
-
-              # Optional extras
-              pipewire
-              liburing
-              xdg-utils
+              # sdl3
+              sdl3
             ];
           };
         };

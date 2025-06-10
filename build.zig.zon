@@ -14,10 +14,6 @@
             .url = "git+https://github.com/griush/zm#2cd45c30058bb32ae9c00fd8aea2a0ab17e3e0a7",
             .hash = "zm-0.3.0-cLX-WRHNAAC8p5hA2bNcgNi9vWIaty3NUu6FJKdAhlBN",
         },
-        .sdl = .{
-            .url = "git+https://github.com/castholm/SDL.git#3ed62e53aecd9ffb28e44b9d35b7c09a8739e823",
-            .hash = "sdl-0.2.4+3.2.16-7uIn9DPhfgH29yAIJqHLc69hNb4IW0q-AngtKCFoT92b",
-        },
     },
     .paths = .{
         "build.zig",

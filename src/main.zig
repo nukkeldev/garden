@@ -21,13 +21,11 @@ var renderer: ?*c.SDL_Renderer = null;
 
 pub fn sdlMain() !void {
     if (!c.SDL_Init(c.SDL_INIT_VIDEO)) {
-        sdl_log.err("Couldn't initialize SDL: {s}", .{c.SDL_GetError()});
-        return error.InitVideo;
+        fatal(sdl_log, "Couldn't initialize SDL: {s}", .{c.SDL_GetError()});
     }
 
     if (!c.SDL_CreateWindowAndRenderer("Garden", 720, 720, 0, &window, &renderer)) {
-        sdl_log.err("Couldn't create window/renderer: {s}", .{c.SDL_GetError()});
-        return error.CreateWindowAndRenderer;
+        fatal(sdl_log, "Couldn't create window/renderer: {s}", .{c.SDL_GetError()});
     }
 }
 
@@ -46,16 +44,17 @@ pub fn main() void {
 
 fn sdlMainWrapper(_: c_int, _: [*c][*c]u8) callconv(.c) c_int {
     sdlMain() catch |e| fatal("Error: {}", .{e});
-    return 0;
+    return 1;
 }
 
 // Utils
 
-fn fatal(comptime msg: []const u8, args: anytype) noreturn {
-    std.debug.print("FATAL: " ++ msg ++ "\n", args);
+fn fatal(comptime Log: type, comptime msg: []const u8, args: anytype) noreturn {
+    Log.err(msg, args);
+    // Exit with a non-error code so the console isn't flooded.
     std.process.exit(0);
 }
 
 fn oom() noreturn {
-    fatal("Out-of-memory!", .{});
+    fatal(log, "Out-of-memory!", .{});
 }

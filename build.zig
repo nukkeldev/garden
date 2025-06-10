@@ -15,6 +15,7 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
 
     const exe = b.addExecutable(.{
@@ -25,27 +26,18 @@ pub fn build(b: *std.Build) !void {
 
     // Dependencies
 
-    const dep_sdl = b.dependency("sdl", .{
-        .target = target,
-        .optimize = optimize,
-        //.preferred_linkage = .dynamic,
-        //.strip = null,
-        //.sanitize_c = null,
-        //.pic = null,
-        //.lto = null,
-        //.emscripten_pthreads = false,
-        //.install_build_config_h = false,
-    });
     const dep_cimgui = b.dependency("cimgui", .{
         .target = target,
         .optimize = optimize,
     });
 
-    exe_mod.linkLibrary(dep_sdl.artifact("SDL3"));
+    exe_mod.linkSystemLibrary("SDL3", .{});
     exe_mod.addImport("cimgui", dep_cimgui.module("cimgui"));
 
     const zm = b.dependency("zm", .{});
     exe_mod.addImport("zm", zm.module("zm"));
+
+    // Command: build-shaders
 
     const build_shaders = b.step("build-shaders", "Builds all of the shaders.");
     build_shaders.dependOn(try buildShaders(b));
@@ -73,6 +65,26 @@ pub fn build(b: *std.Build) !void {
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
+
+    // Tools
+
+    {
+        const step = b.step("check-system", "Checks the system");
+
+        const mod = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .root_source_file = b.path("tools/check-system.zig"),
+            .link_libc = true,
+        });
+        mod.linkSystemLibrary("SDL3", .{});
+
+        const tool_exe = b.addExecutable(.{
+            .name = "check-system",
+            .root_module = mod,
+        });
+        step.dependOn(&b.addRunArtifact(tool_exe).step);
+    }
 }
 
 /// Builds all GLSL shaders in the `src/shaders` directory.
