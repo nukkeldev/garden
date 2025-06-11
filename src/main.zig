@@ -17,9 +17,9 @@ const log = std.log.scoped(.garden);
 var window: ?*c.SDL_Window = null;
 var renderer: ?*c.SDL_Renderer = null;
 
-// SDL
+var should_exit = false;
 
-pub fn sdlMain() !void {
+fn init() !void {
     if (!c.SDL_Init(c.SDL_INIT_VIDEO)) {
         fatal(sdl_log, "Couldn't initialize SDL: {s}", .{c.SDL_GetError()});
     }
@@ -29,22 +29,45 @@ pub fn sdlMain() !void {
     }
 }
 
+fn update() !void {
+    try pollEvents();
+    try render();
+}
+
+fn pollEvents() !void {
+    var event: c.SDL_Event = undefined;
+    if (c.SDL_PollEvent(&event)) switch (event.type) {
+        c.SDL_EVENT_KEY_DOWN => {
+            switch (event.key.scancode) {
+                c.SDL_SCANCODE_ESCAPE => should_exit = true,
+                else => {},
+            }
+        },
+        c.SDL_EVENT_QUIT => should_exit = true,
+        else => {},
+    };
+}
+
+fn render() !void {}
+
+fn exit() !void {}
+
 // Main
 
 pub fn main() void {
-    var da = std.heap.DebugAllocator(.{}).init;
-    const allocator = da.allocator();
-    defer _ = da.deinit();
-
-    const args = std.process.argsAlloc(allocator) catch oom();
-    defer std.process.argsFree(allocator, args);
-
+    const args: []const []const u8 = &.{};
     _ = c.SDL_RunApp(@intCast(args.len), @ptrCast(@constCast(&args)), &sdlMainWrapper, null);
 }
 
 fn sdlMainWrapper(_: c_int, _: [*c][*c]u8) callconv(.c) c_int {
     sdlMain() catch |e| fatal("Error: {}", .{e});
     return 1;
+}
+
+pub fn sdlMain() !void {
+    try init();
+    while (!should_exit) try update();
+    try exit();
 }
 
 // Utils
