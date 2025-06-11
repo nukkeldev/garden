@@ -12,10 +12,21 @@ pub const std_options: std.Options = .{ .log_level = .debug };
 const sdl_log = std.log.scoped(.sdl);
 const log = std.log.scoped(.garden);
 
+// Constants
+
+const NS_PER_S = 1_000_000_000.0;
+
+// Configuration
+
+const TARGET_FRAMERATE: f32 = 60.0;
+const TARGET_FRAMETIME_NS: u64 = @intFromFloat(NS_PER_S / 60.0);
+
 // App
 
 var window: ?*c.SDL_Window = null;
 var renderer: ?*c.SDL_Renderer = null;
+
+var last_update_ns: u64 = 0;
 
 var should_exit = false;
 
@@ -27,11 +38,22 @@ fn init() !void {
     if (!c.SDL_CreateWindowAndRenderer("Garden", 720, 720, 0, &window, &renderer)) {
         fatal(sdl_log, "Couldn't create window/renderer: {s}", .{c.SDL_GetError()});
     }
+
+    last_update_ns = c.SDL_GetTicksNS();
 }
 
 fn update() !void {
+    const ticks_ns: u64 = @intCast(c.SDL_GetTicksNS());
+
+    // TODO: Get rid of conditional.
+    if (ticks_ns - last_update_ns < TARGET_FRAMETIME_NS) {
+        c.SDL_DelayNS(@intCast(TARGET_FRAMETIME_NS - (ticks_ns - last_update_ns)));
+    }
+
     try pollEvents();
-    try render();
+    try render(ticks_ns);
+
+    last_update_ns = ticks_ns;
 }
 
 fn pollEvents() !void {
@@ -48,7 +70,14 @@ fn pollEvents() !void {
     };
 }
 
-fn render() !void {}
+fn render(ticks: u64) !void {
+    const ticks_s = @as(f32, @floatFromInt(ticks)) / NS_PER_S;
+    const rgb = [_]f32{ @sin(ticks_s), @cos(ticks_s), @sin(ticks_s) };
+
+    _ = c.SDL_SetRenderDrawColorFloat(renderer, rgb[0], rgb[1], rgb[2], 1.0);
+    _ = c.SDL_RenderClear(renderer);
+    _ = c.SDL_RenderPresent(renderer);
+}
 
 fn exit() !void {}
 
