@@ -66,28 +66,12 @@ pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
 
-    // Tools
+    // Command: check
 
-    {
-        const step = b.step("check-system", "Checks the system");
-
-        const mod = b.createModule(.{
-            .target = target,
-            .optimize = optimize,
-            .root_source_file = b.path("tools/check-system.zig"),
-            .link_libc = true,
-        });
-        mod.linkSystemLibrary("SDL3", .{});
-
-        const tool_exe = b.addExecutable(.{
-            .name = "check-system",
-            .root_module = mod,
-        });
-        step.dependOn(&b.addRunArtifact(tool_exe).step);
-    }
+    const check_step = b.step("check", "Checks");
+    check_step.dependOn(&exe.step);
 }
 
-/// Builds all GLSL shaders in the `src/shaders` directory.
 fn buildShaders(b: *std.Build) !*std.Build.Step {
     const step = try b.allocator.create(std.Build.Step);
     step.* = .init(.{
@@ -95,6 +79,9 @@ fn buildShaders(b: *std.Build) !*std.Build.Step {
         .name = "compile shaders",
         .owner = b,
     });
+
+    const mkdir = b.addSystemCommand(&.{ "mkdir", "-p" });
+    mkdir.addDirectoryArg(b.path("src/shaders/compiled"));
 
     const vert = b.addSystemCommand(&.{
         "slangc",
@@ -104,14 +91,15 @@ fn buildShaders(b: *std.Build) !*std.Build.Step {
         "-stage",
         "vertex",
         "-target",
-        "glsl",
+        "spirv",
         "-profile",
-        "glsl_410",
+        "spirv_1_0", // TODO: SDL is loading Vulkan 1.0.
         "-o",
-        "src/shaders/shader.vert.glsl",
-        "-reflection-json",
-        "src/shaders/shader.layout.json",
+        "src/shaders/compiled/shader.vert.spv",
+        "-fvk-use-entrypoint-name",
+        // "-emit-spirv-via-glsl", // TODO: Slang emits a warning but it still works lol.
     });
+    vert.step.dependOn(&mkdir.step);
     step.dependOn(&vert.step);
 
     const frag = b.addSystemCommand(&.{
@@ -122,12 +110,15 @@ fn buildShaders(b: *std.Build) !*std.Build.Step {
         "-stage",
         "fragment",
         "-target",
-        "glsl",
+        "spirv",
         "-profile",
-        "glsl_410",
+        "spirv_1_0",
         "-o",
-        "src/shaders/shader.frag.glsl",
+        "src/shaders/compiled/shader.frag.spv",
+        "-fvk-use-entrypoint-name",
+        // "-emit-spirv-via-glsl",
     });
+    frag.step.dependOn(&mkdir.step);
     step.dependOn(&frag.step);
 
     return step;

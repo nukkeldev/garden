@@ -35,7 +35,18 @@
 
               # sdl3
               sdl3
+
+              # vulkan debugging
+              spirv-tools
+              vulkan-tools
+              vulkan-validation-layers
             ];
+            shellHook = ''
+              # export VK_LOADER_DEBUG=all
+              export VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
+              export VK_LAYER_PATH=${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d
+              export SDL_HINT_RENDER_VULKAN_DEBUG=1
+            '';
           };
         };
     };
