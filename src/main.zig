@@ -25,6 +25,8 @@ var device: *c.SDL_GPUDevice = undefined;
 var pipeline: *c.SDL_GPUGraphicsPipeline = undefined;
 var vertex_buffer: *c.SDL_GPUBuffer = undefined;
 
+var render_fence: *c.SDL_GPUFence = undefined;
+
 var last_update_ns: u64 = 0;
 
 var should_exit = false;
@@ -171,6 +173,8 @@ fn pollEvents() !void {
 fn render(ticks: u64) !void {
     _ = ticks;
 
+    if (!c.SDL_QueryGPUFence(device, render_fence)) c.SDL_ReleaseGPUFence(device, render_fence) else return;
+
     const cmd_buf = c.SDL_AcquireGPUCommandBuffer(device) orelse SDL_Fatal("SDL_AcquireGPUCommandBuffer");
 
     var swapchain_texture: ?*c.SDL_GPUTexture = null;
@@ -194,7 +198,7 @@ fn render(ticks: u64) !void {
         c.SDL_DrawGPUPrimitives(render_pass, 3, 1, 0, 0);
     }
 
-    if (!c.SDL_SubmitGPUCommandBuffer(cmd_buf)) SDL_Fatal("SDL_SubmitGPUCommandBuffer");
+    if (c.SDL_SubmitGPUCommandBufferAndAcquireFence(cmd_buf)) |fence| render_fence = fence;
 }
 
 fn exit() !void {
