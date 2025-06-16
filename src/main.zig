@@ -1,6 +1,6 @@
 const std = @import("std");
 
-// const shader = @import("shader.zig");
+const gpu = @import("gpu.zig");
 const common = @import("common.zig");
 const c = common.c;
 
@@ -19,13 +19,13 @@ const TARGET_FRAMETIME_NS: u64 = @intFromFloat(NS_PER_S / 60.0);
 
 // App
 
+var shader_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+
 var window: *c.SDL_Window = undefined;
 var device: *c.SDL_GPUDevice = undefined;
 
-var pipeline: *c.SDL_GPUGraphicsPipeline = undefined;
+var pipeline: ?*c.SDL_GPUGraphicsPipeline = null;
 var vertex_buffer: *c.SDL_GPUBuffer = undefined;
-
-var render_fence: *c.SDL_GPUFence = undefined;
 
 var last_update_ns: u64 = 0;
 
@@ -40,67 +40,8 @@ fn init() !void {
     device = c.SDL_CreateGPUDevice(c.SDL_GPU_SHADERFORMAT_SPIRV, false, "vulkan") orelse SDL_Fatal("SDL_CreateGPUDevice");
     if (!c.SDL_ClaimWindowForGPUDevice(device, window)) SDL_Fatal("SDL_ClaimWindowForGPUDevice");
 
-    // Create our shaders.
-    const vertex_shader_code = @embedFile("shaders/compiled/shader.vert.spv");
-    const vertex_shader = c.SDL_CreateGPUShader(device, &.{
-        .code = vertex_shader_code,
-        .code_size = vertex_shader_code.len,
-        .entrypoint = "vertexMain",
-        .format = c.SDL_GPU_SHADERFORMAT_SPIRV,
-        .stage = c.SDL_GPU_SHADERSTAGE_VERTEX,
-    }) orelse SDL_Fatal("SDL_CreateGPUShader(Vertex)");
-
-    const fragment_shader_code = @embedFile("shaders/compiled/shader.frag.spv");
-    const fragment_shader = c.SDL_CreateGPUShader(device, &.{
-        .code = fragment_shader_code,
-        .code_size = fragment_shader_code.len,
-        .entrypoint = "fragmentMain",
-        .format = c.SDL_GPU_SHADERFORMAT_SPIRV,
-        .stage = c.SDL_GPU_SHADERSTAGE_FRAGMENT,
-    }) orelse SDL_Fatal("SDL_CreateGPUShader(Fragment)");
-
-    pipeline = c.SDL_CreateGPUGraphicsPipeline(device, &.{
-        .vertex_shader = vertex_shader,
-        .fragment_shader = fragment_shader,
-        .vertex_input_state = .{
-            .num_vertex_buffers = 1,
-            .vertex_buffer_descriptions = &[_]c.SDL_GPUVertexBufferDescription{
-                .{
-                    .slot = 0,
-                    .pitch = @sizeOf(f32) * 3 + @sizeOf(f32) * 3,
-                    .input_rate = c.SDL_GPU_VERTEXINPUTRATE_VERTEX,
-                    .instance_step_rate = 0,
-                },
-            },
-            .num_vertex_attributes = 2,
-            .vertex_attributes = &[_]c.SDL_GPUVertexAttribute{
-                .{
-                    .buffer_slot = 0,
-                    .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
-                    .location = 0,
-                    .offset = 0,
-                },
-                .{
-                    .buffer_slot = 0,
-                    .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
-                    .location = 1,
-                    .offset = @sizeOf(f32) * 3,
-                },
-            },
-        },
-        .target_info = .{
-            .num_color_targets = 1,
-            .color_target_descriptions = &[_]c.SDL_GPUColorTargetDescription{
-                .{
-                    .format = c.SDL_GetGPUSwapchainTextureFormat(device, window),
-                },
-            },
-        },
-    }) orelse SDL_Fatal("SDL_CreateGPUGraphicsPipeline");
-
-    // Release shaders as early as possible.
-    c.SDL_ReleaseGPUShader(device, vertex_shader);
-    c.SDL_ReleaseGPUShader(device, fragment_shader);
+    // Create the rendering pipeline.
+    try load_pipeline();
 
     // Create vertex buffer.
     vertex_buffer = c.SDL_CreateGPUBuffer(device, &.{
@@ -159,9 +100,10 @@ fn update() !void {
 fn pollEvents() !void {
     var event: c.SDL_Event = undefined;
     if (c.SDL_PollEvent(&event)) switch (event.type) {
-        c.SDL_EVENT_KEY_DOWN => {
+        c.SDL_EVENT_KEY_DOWN => if (!event.key.repeat) {
             switch (event.key.scancode) {
                 c.SDL_SCANCODE_ESCAPE => should_exit = true,
+                c.SDL_SCANCODE_R => try load_pipeline(),
                 else => {},
             }
         },
@@ -172,8 +114,6 @@ fn pollEvents() !void {
 
 fn render(ticks: u64) !void {
     _ = ticks;
-
-    if (!c.SDL_QueryGPUFence(device, render_fence)) c.SDL_ReleaseGPUFence(device, render_fence) else return;
 
     const cmd_buf = c.SDL_AcquireGPUCommandBuffer(device) orelse SDL_Fatal("SDL_AcquireGPUCommandBuffer");
 
@@ -193,17 +133,33 @@ fn render(ticks: u64) !void {
         const render_pass = c.SDL_BeginGPURenderPass(cmd_buf, &[_]c.SDL_GPUColorTargetInfo{color_target_info}, 1, null) orelse SDL_Fatal("SDL_BeginGPURenderPass");
         defer c.SDL_EndGPURenderPass(render_pass);
 
-        c.SDL_BindGPUGraphicsPipeline(render_pass, pipeline);
+        c.SDL_BindGPUGraphicsPipeline(render_pass, pipeline.?);
         c.SDL_BindGPUVertexBuffers(render_pass, 0, &[_]c.SDL_GPUBufferBinding{.{ .buffer = vertex_buffer, .offset = 0 }}, 1);
         c.SDL_DrawGPUPrimitives(render_pass, 3, 1, 0, 0);
     }
 
-    if (c.SDL_SubmitGPUCommandBufferAndAcquireFence(cmd_buf)) |fence| render_fence = fence;
+    if (!c.SDL_SubmitGPUCommandBuffer(cmd_buf)) common.SDL_Err("SDL_SubmitGPUCommandBuffer");
 }
 
 fn exit() !void {
     c.SDL_ReleaseGPUGraphicsPipeline(device, pipeline);
     c.SDL_ReleaseGPUBuffer(device, vertex_buffer);
+
+    shader_arena.deinit();
+}
+
+fn load_pipeline() !void {
+    if (pipeline != null) c.SDL_ReleaseGPUGraphicsPipeline(device, pipeline);
+
+    const compiled_vertex_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/shaders/shader.slang", .Vertex, true)).?;
+    const compiled_fragment_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/shaders/shader.slang", .Fragment, true)).?;
+
+    const vertex_layout = gpu.slang.ShaderLayout.parseLeaky(shader_arena.allocator(), compiled_vertex_shader.layout).?;
+    const fragment_layout = gpu.slang.ShaderLayout.parseLeaky(shader_arena.allocator(), compiled_fragment_shader.layout).?;
+
+    pipeline = gpu.slang.ShaderLayout.createPipeline(device, window, &vertex_layout, &fragment_layout, compiled_vertex_shader.spv, compiled_fragment_shader.spv).?;
+
+    common.log.info("Compiled and reloaded shaders!", .{});
 }
 
 // Main
@@ -222,4 +178,11 @@ pub fn sdlMain() !void {
     try init();
     while (!should_exit) try update();
     try exit();
+}
+
+// Tests
+
+test {
+    std.testing.log_level = .debug;
+    std.testing.refAllDeclsRecursive(gpu);
 }

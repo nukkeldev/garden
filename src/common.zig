@@ -38,3 +38,12 @@ pub fn fatal(comptime Log: type, comptime msg: []const u8, args: anytype) noretu
 pub fn oom() noreturn {
     fatal(log, "Out-of-memory!", .{});
 }
+
+// C-Interop
+
+pub fn cstr(allocator: std.mem.Allocator, str: []const u8) ![:0]const u8 {
+    const out = try allocator.alloc(u8, str.len + 1);
+    @memset(out, 0);
+    std.mem.copyForwards(u8, out, str);
+    return @ptrCast(out);
+}
