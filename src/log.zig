@@ -7,14 +7,13 @@ pub const gdn = TaggedLogger(.gdn, defaultLog, true);
 pub const gui = TaggedLogger(.gui, defaultLog, false);
 pub const sdl = TaggedLogger(.sdl, struct {
     fn log(
-        comptime source: std.builtin.SourceLocation,
         comptime message_level: std.log.Level,
         comptime scope: @Type(.enum_literal),
         comptime format: []const u8,
         args: anytype,
     ) void {
         _ = args;
-        defaultLog(source, message_level, scope, format ++ ": {s}!", .{@import("ffi.zig").c.SDL_GetError()});
+        defaultLog(message_level, scope, format ++ ": {s}!", .{@import("ffi.zig").c.SDL_GetError()});
     }
 }.log, false);
 
@@ -29,13 +28,12 @@ pub fn oom() noreturn {
 fn TaggedLogger(comptime tag: @TypeOf(.enum_literal), comptime logFn: @TypeOf(defaultLog), comptime with_args: bool) type {
     const log = struct {
         fn log(
-            comptime source: std.builtin.SourceLocation,
             comptime message_level: std.log.Level,
             comptime format: []const u8,
             args: anytype,
         ) void {
             if (comptime !std.log.logEnabled(message_level, tag)) return;
-            logFn(source, message_level, tag, format, args);
+            logFn(message_level, tag, format, args);
         }
     }.log;
 
@@ -45,28 +43,28 @@ fn TaggedLogger(comptime tag: @TypeOf(.enum_literal), comptime logFn: @TypeOf(de
                 comptime format: []const u8,
                 args: anytype,
             ) void {
-                log(@src(), .debug, format, args);
+                log(.debug, format, args);
             }
 
             pub inline fn info(
                 comptime format: []const u8,
                 args: anytype,
             ) void {
-                log(@src(), .info, format, args);
+                log(.info, format, args);
             }
 
             pub inline fn warn(
                 comptime format: []const u8,
                 args: anytype,
             ) void {
-                log(@src(), .warn, format, args);
+                log(.warn, format, args);
             }
 
             pub inline fn err(
                 comptime format: []const u8,
                 args: anytype,
             ) void {
-                log(@src(), .err, format, args);
+                log(.err, format, args);
             }
 
             pub inline fn fatal(
@@ -83,25 +81,25 @@ fn TaggedLogger(comptime tag: @TypeOf(.enum_literal), comptime logFn: @TypeOf(de
             pub inline fn debug(
                 comptime format: []const u8,
             ) void {
-                log(@src(), .debug, format, .{});
+                log(.debug, format, .{});
             }
 
             pub inline fn info(
                 comptime format: []const u8,
             ) void {
-                log(@src(), .info, format, .{});
+                log(.info, format, .{});
             }
 
             pub inline fn warn(
                 comptime format: []const u8,
             ) void {
-                log(@src(), .warn, format, .{});
+                log(.warn, format, .{});
             }
 
             pub inline fn err(
                 comptime format: []const u8,
             ) void {
-                log(@src(), .err, format, .{});
+                log(.err, format, .{});
             }
 
             pub inline fn fatal(
@@ -115,12 +113,28 @@ fn TaggedLogger(comptime tag: @TypeOf(.enum_literal), comptime logFn: @TypeOf(de
 }
 
 fn defaultLog(
-    comptime source: std.builtin.SourceLocation,
     comptime message_level: std.log.Level,
     comptime scope: @Type(.enum_literal),
     comptime format: []const u8,
     args: anytype,
 ) void {
-    const source_fmt = std.fmt.comptimePrint("({s}/{s}:{}) ", .{ source.file, source.fn_name, source.line });
-    std.log.defaultLog(message_level, scope, source_fmt ++ format, args);
+    if (@import("builtin").mode == .Debug) {
+        // https://github.com/ziglang/zig/issues/7106
+        const debug_info = std.debug.getSelfDebugInfo() catch unreachable;
+        var it = std.debug.StackIterator.init(@returnAddress(), null);
+        _ = it.next();
+        _ = it.next();
+        const address: usize = it.next().?;
+        const module = debug_info.getModuleForAddress(address - 1) catch unreachable;
+        const symbol_info = module.getSymbolAtAddress(debug_info.allocator, address) catch unreachable;
+        defer if (symbol_info.source_location) |sl| debug_info.allocator.free(sl.file_name);
+        const source = symbol_info.source_location.?;
+
+        const source_fmt = std.fmt.allocPrint(debug_info.allocator, "({s}@{s}:{}) ", .{ std.fs.path.basename(source.file_name), symbol_info.name, source.line }) catch oom();
+        defer debug_info.allocator.free(source_fmt);
+
+        std.log.defaultLog(message_level, scope, "{s}" ++ format, .{source_fmt} ++ args);
+    } else {
+        std.log.defaultLog(message_level, scope, format, args);
+    }
 }
