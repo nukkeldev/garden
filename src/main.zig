@@ -1,10 +1,16 @@
 const std = @import("std");
 
 const gpu = @import("gpu.zig");
-const common = @import("common.zig");
-const c = common.c;
+const ffi = @import("ffi.zig");
+const log = @import("log.zig");
 
-const SDL_Fatal = common.SDL_Fatal;
+const gdn = log.gdn;
+const sdl = log.sdl;
+const gui = log.gui;
+
+const c = ffi.c;
+const nullptr = ffi.nullptr;
+const cstr = ffi.cstr;
 
 pub const std_options: std.Options = .{ .log_level = .debug };
 
@@ -14,8 +20,13 @@ const NS_PER_S = 1_000_000_000.0;
 
 // Configuration
 
+const INITIAL_WINDOW_SIZE = .{ .width = 1024, .height = 1024 };
+const WINDOW_FLAGS = c.SDL_WINDOW_RESIZABLE | c.SDL_WINDOW_HIDDEN | c.SDL_WINDOW_HIGH_PIXEL_DENSITY;
+
 const TARGET_FRAMERATE: f32 = 60.0;
 const TARGET_FRAMETIME_NS: u64 = @intFromFloat(NS_PER_S / 60.0);
+
+const FRAMES_IN_FLIGHT = 3;
 
 // App
 
@@ -33,16 +44,25 @@ var should_exit = false;
 
 fn init() !void {
     // Initialize SDL.
-    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) SDL_Fatal("SDL_Init(c.SDL_INIT_VIDEO)");
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) sdl.fatal("SDL_Init(c.SDL_INIT_VIDEO)");
 
-    // Create the window associated with the GPU device.
-    window = c.SDL_CreateWindow("Garden", 720, 720, 0) orelse SDL_Fatal("SDL_CreateWindow");
-    device = c.SDL_CreateGPUDevice(c.SDL_GPU_SHADERFORMAT_SPIRV, false, "vulkan") orelse SDL_Fatal("SDL_CreateGPUDevice");
-    if (!c.SDL_ClaimWindowForGPUDevice(device, window)) SDL_Fatal("SDL_ClaimWindowForGPUDevice");
+    // Create the window.
+    const display_scale = c.SDL_GetDisplayContentScale(c.SDL_GetPrimaryDisplay());
+    window = c.SDL_CreateWindow(
+        "Garden",
+        @intFromFloat(display_scale * @as(f32, @floatFromInt(INITIAL_WINDOW_SIZE.width))),
+        @intFromFloat(display_scale * @as(f32, @floatFromInt(INITIAL_WINDOW_SIZE.height))),
+        WINDOW_FLAGS,
+    ) orelse sdl.fatal("SDL_CreateWindow");
+    if (!c.SDL_SetWindowPosition(window, c.SDL_WINDOWPOS_CENTERED, c.SDL_WINDOWPOS_CENTERED)) sdl.err("SDL_SetWindowPosition");
+    if (!c.SDL_ShowWindow(window)) sdl.err("SDL_ShowWindow");
 
-    // When this is not set to the maxiumum of 3, Vulkan's Validation Layer
-    // complains about semaphores not being re-accquired.
-    if (!c.SDL_SetGPUAllowedFramesInFlight(device, 3)) SDL_Fatal("SDL_SetGPUAllowedFramesInFlight");
+    // Create the GPU device and claim the window for it.
+    // TODO: This is currently locked to vulkan; add support for other renderers and tell slang the appropriate one to compile for as well.
+    device = c.SDL_CreateGPUDevice(c.SDL_GPU_SHADERFORMAT_SPIRV, true, nullptr([*c]const u8)) orelse sdl.fatal("SDL_CreateGPUDevice");
+    if (!c.SDL_ClaimWindowForGPUDevice(device, window)) sdl.fatal("SDL_ClaimWindowForGPUDevice");
+    if (!c.SDL_SetGPUSwapchainParameters(device, window, c.SDL_GPU_SWAPCHAINCOMPOSITION_SDR, c.SDL_GPU_PRESENTMODE_MAILBOX)) sdl.fatal("SDL_SetGPUSwapchainParameters");
+    if (!c.SDL_SetGPUAllowedFramesInFlight(device, FRAMES_IN_FLIGHT)) sdl.fatal("SDL_SetGPUAllowedFramesInFlight");
 
     // Create the rendering pipeline.
     try load_pipeline();
@@ -51,15 +71,15 @@ fn init() !void {
     vertex_buffer = c.SDL_CreateGPUBuffer(device, &.{
         .usage = c.SDL_GPU_BUFFERUSAGE_VERTEX,
         .size = (@sizeOf(f32) * 3 + @sizeOf(f32) * 3) * 3,
-    }) orelse SDL_Fatal("SDL_CreateGPUBuffer(SDL_GPU_BUFFERUSAGE_VERTEX)");
+    }) orelse sdl.fatal("SDL_CreateGPUBuffer(SDL_GPU_BUFFERUSAGE_VERTEX)");
 
     const transfer_buffer = c.SDL_CreateGPUTransferBuffer(device, &.{
         .usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
         .size = (@sizeOf(f32) * 3 + @sizeOf(f32) * 3) * 3,
-    }) orelse SDL_Fatal("SDL_CreateGPUTransferBuffer");
+    }) orelse sdl.fatal("SDL_CreateGPUTransferBuffer");
 
     {
-        const transfer_data: *[3][6]f32 = @ptrCast(@alignCast(c.SDL_MapGPUTransferBuffer(device, transfer_buffer, false) orelse common.SDL_Fatal("SDL_MapGPUTransferBuffer")));
+        const transfer_data: *[3][6]f32 = @ptrCast(@alignCast(c.SDL_MapGPUTransferBuffer(device, transfer_buffer, false) orelse sdl.fatal("SDL_MapGPUTransferBuffer")));
         transfer_data[0] = [_]f32{ 0, 0.5, 0, 1, 0, 0 };
         transfer_data[1] = [_]f32{ -0.5, -0.5, 0, 0, 1, 0 };
         transfer_data[2] = [_]f32{ 0.5, -0.5, 0, 0, 0, 1 };
@@ -67,8 +87,8 @@ fn init() !void {
 
     c.SDL_UnmapGPUTransferBuffer(device, transfer_buffer);
 
-    const upload_cmd_buf = c.SDL_AcquireGPUCommandBuffer(device) orelse SDL_Fatal("SDL_AcquireGPUCommandBuffer");
-    const copy_pass = c.SDL_BeginGPUCopyPass(upload_cmd_buf) orelse SDL_Fatal("SDL_BeginGPUCopyPass");
+    const upload_cmd_buf = c.SDL_AcquireGPUCommandBuffer(device) orelse sdl.fatal("SDL_AcquireGPUCommandBuffer");
+    const copy_pass = c.SDL_BeginGPUCopyPass(upload_cmd_buf) orelse sdl.fatal("SDL_BeginGPUCopyPass");
 
     c.SDL_UploadToGPUBuffer(copy_pass, &.{
         .transfer_buffer = transfer_buffer,
@@ -80,7 +100,7 @@ fn init() !void {
     }, false);
 
     c.SDL_EndGPUCopyPass(copy_pass);
-    if (!c.SDL_SubmitGPUCommandBuffer(upload_cmd_buf)) SDL_Fatal("SDL_SubmitGPUCommandBuffer");
+    if (!c.SDL_SubmitGPUCommandBuffer(upload_cmd_buf)) sdl.fatal("SDL_SubmitGPUCommandBuffer");
     c.SDL_ReleaseGPUTransferBuffer(device, transfer_buffer);
 
     // Set the start time.
@@ -119,11 +139,11 @@ fn pollEvents() !void {
 fn render(ticks: u64) !void {
     _ = ticks;
 
-    const cmd_buf = c.SDL_AcquireGPUCommandBuffer(device) orelse SDL_Fatal("SDL_AcquireGPUCommandBuffer");
+    const cmd_buf = c.SDL_AcquireGPUCommandBuffer(device) orelse sdl.fatal("SDL_AcquireGPUCommandBuffer");
 
     var swapchain_texture: ?*c.SDL_GPUTexture = null;
     if (!c.SDL_WaitAndAcquireGPUSwapchainTexture(cmd_buf, window, &swapchain_texture, null, null)) {
-        SDL_Fatal("SDL_WaitAndAcquireGPUSwapchainTexture");
+        sdl.fatal("SDL_WaitAndAcquireGPUSwapchainTexture");
     }
 
     if (swapchain_texture) |tex| {
@@ -134,7 +154,7 @@ fn render(ticks: u64) !void {
             .store_op = c.SDL_GPU_STOREOP_STORE,
         };
 
-        const render_pass = c.SDL_BeginGPURenderPass(cmd_buf, &[_]c.SDL_GPUColorTargetInfo{color_target_info}, 1, null) orelse SDL_Fatal("SDL_BeginGPURenderPass");
+        const render_pass = c.SDL_BeginGPURenderPass(cmd_buf, &[_]c.SDL_GPUColorTargetInfo{color_target_info}, 1, null) orelse sdl.fatal("SDL_BeginGPURenderPass");
         defer c.SDL_EndGPURenderPass(render_pass);
 
         c.SDL_BindGPUGraphicsPipeline(render_pass, pipeline.?);
@@ -142,7 +162,7 @@ fn render(ticks: u64) !void {
         c.SDL_DrawGPUPrimitives(render_pass, 3, 1, 0, 0);
     }
 
-    if (!c.SDL_SubmitGPUCommandBuffer(cmd_buf)) common.SDL_Err("SDL_SubmitGPUCommandBuffer");
+    if (!c.SDL_SubmitGPUCommandBuffer(cmd_buf)) sdl.fatal("SDL_SubmitGPUCommandBuffer");
 }
 
 fn exit() !void {
@@ -163,7 +183,7 @@ fn load_pipeline() !void {
 
     pipeline = gpu.slang.ShaderLayout.createPipeline(device, window, &vertex_layout, &fragment_layout, compiled_vertex_shader.spv, compiled_fragment_shader.spv).?;
 
-    common.log.info("Compiled and reloaded shaders!", .{});
+    gdn.info("Compiled and reloaded shaders!", .{});
 }
 
 // Main
@@ -174,7 +194,7 @@ pub fn main() void {
 }
 
 fn sdlMainWrapper(_: c_int, _: [*c][*c]u8) callconv(.c) c_int {
-    sdlMain() catch |e| common.fatal(common.log, "{}", .{e});
+    sdlMain() catch |e| gdn.fatal("{}", .{e});
     return 1;
 }
 

@@ -1,5 +1,5 @@
 const std = @import("std");
-const common = @import("../common.zig");
+const log = @import("../log.zig");
 
 pub const CompiledShader = struct {
     allocator: std.mem.Allocator,
@@ -33,10 +33,10 @@ pub const CompiledShader = struct {
         const basename = std.fs.path.basename(abs);
         const filename = basename[0 .. std.mem.lastIndexOfScalar(u8, basename, '.') orelse basename.len];
 
-        std.log.debug("Compiling {s} shader: {s}/{s}.slang...", .{ ext, dirname, filename });
+        log.gdn.debug("Compiling {s} shader: {s}/{s}.slang...", .{ ext, dirname, filename });
 
-        const spv_path = std.fmt.allocPrint(allocator, "{s}/compiled/{s}.{s}.spv", .{ dirname, filename, ext[0..4] }) catch common.oom();
-        const layout_path = std.fmt.allocPrint(allocator, "{s}/compiled/{s}.{s}.layout", .{ dirname, filename, ext[0..4] }) catch common.oom();
+        const spv_path = std.fmt.allocPrint(allocator, "{s}/compiled/{s}.{s}.spv", .{ dirname, filename, ext[0..4] }) catch log.oom();
+        const layout_path = std.fmt.allocPrint(allocator, "{s}/compiled/{s}.{s}.layout", .{ dirname, filename, ext[0..4] }) catch log.oom();
         defer allocator.free(spv_path);
         defer allocator.free(layout_path);
 
@@ -71,12 +71,12 @@ pub const CompiledShader = struct {
 
         // Read the output files.
         const spv = std.fs.cwd().readFileAlloc(allocator, spv_path, std.math.maxInt(usize)) catch {
-            common.log.err("Failed to read vertex shader!", .{});
+            log.gdn.err("Failed to read vertex shader!", .{});
             return null;
         };
 
         const layout = std.fs.cwd().readFileAlloc(allocator, layout_path, std.math.maxInt(usize)) catch {
-            common.log.err("Failed to read vertex shader layout!", .{});
+            log.gdn.err("Failed to read vertex shader layout!", .{});
             return null;
         };
 

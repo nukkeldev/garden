@@ -1,6 +1,11 @@
 const std = @import("std");
-const common = @import("../common.zig");
-const c = common.c;
+
+const ffi = @import("../ffi.zig");
+const log = @import("../log.zig");
+
+const c = ffi.c;
+const nullptr = ffi.nullptr;
+const cstr = ffi.cstr;
 
 /// This is not a full representation of the file, just the properties we need.
 pub const ShaderLayout = struct {
@@ -14,7 +19,7 @@ pub const ShaderLayout = struct {
 
     pub fn parseLeaky(allocator: std.mem.Allocator, json: []const u8) ?Self {
         // Parse the reflection json file.
-        const parsed = std.json.parseFromSlice(std.json.Value, allocator, json, .{}) catch common.oom();
+        const parsed = std.json.parseFromSlice(std.json.Value, allocator, json, .{}) catch log.oom();
         defer parsed.deinit();
 
         var self = Self{
@@ -27,7 +32,7 @@ pub const ShaderLayout = struct {
         const entry_points = parsed.value.object.get("entryPoints").?.array;
         const entry_point = entry_points.getLast().object;
 
-        self.entry_point_name = allocator.dupe(u8, entry_point.get("name").?.string) catch common.oom();
+        self.entry_point_name = allocator.dupe(u8, entry_point.get("name").?.string) catch log.oom();
         self.stage = outer: {
             const raw_stage = entry_point.get("stage").?.string;
 
@@ -36,7 +41,7 @@ pub const ShaderLayout = struct {
             } else if (std.mem.eql(u8, raw_stage, "fragment")) {
                 break :outer c.SDL_GPU_SHADERSTAGE_FRAGMENT;
             } else {
-                common.log.err("Invalid Shader Type: {s}!", .{raw_stage});
+                log.gdn.err("Invalid Shader Type: {s}!", .{raw_stage});
                 return null;
             }
         };
@@ -47,7 +52,7 @@ pub const ShaderLayout = struct {
         // Parse the parameters for this entry point if present.
         const parameters = entry_point.get("parameters").?.array;
         if (parameters.items.len > 1) {
-            common.log.err("TODO: Shader reflection only supports a single vertex parameter!", .{});
+            log.gdn.err("TODO: Shader reflection only supports a single vertex parameter!", .{});
             return null;
         }
 
@@ -57,7 +62,7 @@ pub const ShaderLayout = struct {
 
             var offset: usize = 0;
             for (fields.items) |field| {
-                const vertex_attribute = vertex_attributes.addOne() catch common.oom();
+                const vertex_attribute = vertex_attributes.addOne() catch log.oom();
 
                 vertex_attribute.location = @intCast(field.object.get("binding").?.object.get("index").?.integer);
                 vertex_attribute.offset = @intCast(offset);
@@ -82,15 +87,15 @@ pub const ShaderLayout = struct {
                             };
                             break :outer .{ @intCast(sdl_type), @sizeOf(f32) * count };
                         } else {
-                            common.log.err("TODO: Scalar type \"{s}\" not yet supported!", .{scalar_type});
+                            log.gdn.err("TODO: Scalar type \"{s}\" not yet supported!", .{scalar_type});
                             return null;
                         }
                     } else {
-                        common.log.err("TODO: Vector element kind \"{s}\" not yet supported!", .{element_type_kind});
+                        log.gdn.err("TODO: Vector element kind \"{s}\" not yet supported!", .{element_type_kind});
                         return null;
                     }
                 } else {
-                    common.log.err("TODO: Type kind \"{s}\" not yet supported!", .{type_kind});
+                    log.gdn.err("TODO: Type kind \"{s}\" not yet supported!", .{type_kind});
                     return null;
                 };
 
@@ -100,7 +105,7 @@ pub const ShaderLayout = struct {
                 offset += size;
             }
 
-            const vertex_buffer_description = allocator.create(c.SDL_GPUVertexBufferDescription) catch common.oom();
+            const vertex_buffer_description = allocator.create(c.SDL_GPUVertexBufferDescription) catch log.oom();
             vertex_buffer_description.* = .{
                 .slot = 0,
                 .pitch = @intCast(offset),
@@ -108,12 +113,12 @@ pub const ShaderLayout = struct {
                 .instance_step_rate = 0,
             };
 
-            self.vertex_input = allocator.create(c.SDL_GPUVertexInputState) catch common.oom();
+            self.vertex_input = allocator.create(c.SDL_GPUVertexInputState) catch log.oom();
             self.vertex_input.?.* = .{
                 .num_vertex_buffers = 1,
                 .vertex_buffer_descriptions = @ptrCast(vertex_buffer_description),
                 .num_vertex_attributes = @intCast(vertex_attributes.items.len),
-                .vertex_attributes = @ptrCast(allocator.dupe(c.SDL_GPUVertexAttribute, vertex_attributes.items) catch common.oom()),
+                .vertex_attributes = @ptrCast(allocator.dupe(c.SDL_GPUVertexAttribute, vertex_attributes.items) catch log.oom()),
             };
         }
 
@@ -122,13 +127,13 @@ pub const ShaderLayout = struct {
 
     pub fn createShader(self: *const Self, device: *c.SDL_GPUDevice, code: []const u8) ?*c.SDL_GPUShader {
         const shader = c.SDL_CreateGPUShader(device, &.{
-            .code = common.cstr(self.allocator, code) catch common.oom(),
+            .code = cstr(self.allocator, code) catch log.oom(),
             .code_size = code.len,
-            .entrypoint = common.cstr(self.allocator, self.entry_point_name) catch common.oom(),
+            .entrypoint = cstr(self.allocator, self.entry_point_name) catch log.oom(),
             .format = c.SDL_GPU_SHADERFORMAT_SPIRV,
             .stage = self.stage,
         });
-        if (shader == null) common.SDL_Err("SDL_CreateGPUShader");
+        if (shader == null) log.sdl.err("SDL_CreateGPUShader");
 
         return shader;
     }
@@ -157,7 +162,7 @@ pub const ShaderLayout = struct {
                 },
             },
         });
-        if (pipeline == null) common.SDL_Err("SDL_CreateGPUGraphicsPipeline");
+        if (pipeline == null) log.sdl.err("SDL_CreateGPUGraphicsPipeline");
 
         c.SDL_ReleaseGPUShader(device, vertex_shader);
         c.SDL_ReleaseGPUShader(device, fragment_shader);
