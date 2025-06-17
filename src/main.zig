@@ -40,6 +40,10 @@ fn init() !void {
     device = c.SDL_CreateGPUDevice(c.SDL_GPU_SHADERFORMAT_SPIRV, false, "vulkan") orelse SDL_Fatal("SDL_CreateGPUDevice");
     if (!c.SDL_ClaimWindowForGPUDevice(device, window)) SDL_Fatal("SDL_ClaimWindowForGPUDevice");
 
+    // When this is not set to the maxiumum of 3, Vulkan's Validation Layer
+    // complains about semaphores not being re-accquired.
+    if (!c.SDL_SetGPUAllowedFramesInFlight(device, 3)) SDL_Fatal("SDL_SetGPUAllowedFramesInFlight");
+
     // Create the rendering pipeline.
     try load_pipeline();
 
