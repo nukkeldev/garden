@@ -6,13 +6,13 @@
     .fingerprint = 0x3c0918ea7545952d, // Changing this has security and trust implications.
 
     .dependencies = .{
-        .cimgui = .{
-            .url = "git+https://github.com/floooh/dcimgui.git#716dae9c6a03eec642a4fb2ac28ebcd2f52f76ba",
-            .hash = "cimgui-0.1.0-44ClkYmBhgC-Q3NWFyYqwThmmTdmkoIlAjF4ABfyqIAZ",
-        },
         .zm = .{
             .url = "git+https://github.com/griush/zm#2cd45c30058bb32ae9c00fd8aea2a0ab17e3e0a7",
             .hash = "zm-0.3.0-cLX-WRHNAAC8p5hA2bNcgNi9vWIaty3NUu6FJKdAhlBN",
+        },
+        .cimgui_zig = .{
+            .url = "git+https://github.com/tiawl/cimgui.zig#e1d31f7bfd3e2995bbb84554c5721d893c0b16da",
+            .hash = "cimgui_zig-1.0.0-2XubkhqBUAAq3RaU0eUtQf2IZKjFDQJiUnXpgnvRM5u1",
         },
     },
     .paths = .{

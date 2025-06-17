@@ -13,7 +13,7 @@ pub const sdl = TaggedLogger(.sdl, struct {
         args: anytype,
     ) void {
         _ = args;
-        defaultLog(message_level, scope, format ++ ": {s}!", .{@import("ffi.zig").c.SDL_GetError()});
+        defaultLog(message_level, scope, format ++ ": {s}", .{@import("ffi.zig").c.SDL_GetError()});
     }
 }.log, false);
 
@@ -39,35 +39,35 @@ fn TaggedLogger(comptime tag: @TypeOf(.enum_literal), comptime logFn: @TypeOf(de
 
     if (with_args) {
         return struct {
-            pub inline fn debug(
+            pub fn debug(
                 comptime format: []const u8,
                 args: anytype,
             ) void {
                 log(.debug, format, args);
             }
 
-            pub inline fn info(
+            pub fn info(
                 comptime format: []const u8,
                 args: anytype,
             ) void {
                 log(.info, format, args);
             }
 
-            pub inline fn warn(
+            pub fn warn(
                 comptime format: []const u8,
                 args: anytype,
             ) void {
                 log(.warn, format, args);
             }
 
-            pub inline fn err(
+            pub fn err(
                 comptime format: []const u8,
                 args: anytype,
             ) void {
                 log(.err, format, args);
             }
 
-            pub inline fn fatal(
+            pub fn fatal(
                 comptime format: []const u8,
                 args: anytype,
             ) noreturn {
@@ -78,31 +78,31 @@ fn TaggedLogger(comptime tag: @TypeOf(.enum_literal), comptime logFn: @TypeOf(de
         };
     } else {
         return struct {
-            pub inline fn debug(
+            pub fn debug(
                 comptime format: []const u8,
             ) void {
                 log(.debug, format, .{});
             }
 
-            pub inline fn info(
+            pub fn info(
                 comptime format: []const u8,
             ) void {
                 log(.info, format, .{});
             }
 
-            pub inline fn warn(
+            pub fn warn(
                 comptime format: []const u8,
             ) void {
                 log(.warn, format, .{});
             }
 
-            pub inline fn err(
+            pub fn err(
                 comptime format: []const u8,
             ) void {
                 log(.err, format, .{});
             }
 
-            pub inline fn fatal(
+            pub fn fatal(
                 comptime format: []const u8,
             ) noreturn {
                 err(format);
@@ -122,11 +122,10 @@ fn defaultLog(
         // https://github.com/ziglang/zig/issues/7106
         const debug_info = std.debug.getSelfDebugInfo() catch unreachable;
         var it = std.debug.StackIterator.init(@returnAddress(), null);
-        _ = it.next();
-        _ = it.next();
+        for (0..4) |_| _ = it.next();
         const address: usize = it.next().?;
         const module = debug_info.getModuleForAddress(address - 1) catch unreachable;
-        const symbol_info = module.getSymbolAtAddress(debug_info.allocator, address) catch unreachable;
+        const symbol_info = module.getSymbolAtAddress(debug_info.allocator, address - 1) catch unreachable;
         defer if (symbol_info.source_location) |sl| debug_info.allocator.free(sl.file_name);
         const source = symbol_info.source_location.?;
 

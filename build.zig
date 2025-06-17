@@ -1,7 +1,5 @@
 const std = @import("std");
-const sokol = @import("sokol");
-
-var dep_sokol: *std.Build.Dependency = undefined;
+const cimgui = @import("cimgui_zig");
 
 pub fn build(b: *std.Build) !void {
     // Options
@@ -26,13 +24,7 @@ pub fn build(b: *std.Build) !void {
 
     // Dependencies
 
-    const dep_cimgui = b.dependency("cimgui", .{
-        .target = target,
-        .optimize = optimize,
-    });
-
     exe_mod.linkSystemLibrary("SDL3", .{});
-    exe_mod.addImport("cimgui", dep_cimgui.module("cimgui"));
 
     const zm = b.dependency("zm", .{});
     exe_mod.addImport("zm", zm.module("zm"));
@@ -70,6 +62,15 @@ pub fn build(b: *std.Build) !void {
 
     const check_step = b.step("check", "Checks");
     check_step.dependOn(&exe.step);
+
+    // Command: (deep-)clean
+
+    const deep_clean_step = b.step("deep-clean", "Cleans deeply");
+    deep_clean_step.dependOn(&b.addRemoveDirTree(b.path(".zig-cache")).step);
+    deep_clean_step.dependOn(&b.addRemoveDirTree(b.path("zig-out")).step);
+
+    const clean_step = b.step("clean", "Cleans");
+    clean_step.dependOn(&b.addRemoveDirTree(b.path("zig-out")).step);
 }
 
 fn buildShaders(b: *std.Build) !*std.Build.Step {

@@ -9,7 +9,6 @@ const sdl = log.sdl;
 const gui = log.gui;
 
 const c = ffi.c;
-const nullptr = ffi.nullptr;
 const cstr = ffi.cstr;
 
 pub const std_options: std.Options = .{ .log_level = .debug };
@@ -34,6 +33,7 @@ var shader_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
 var window: *c.SDL_Window = undefined;
 var device: *c.SDL_GPUDevice = undefined;
+// var im_context: *c.ImGuiContext = undefined;
 
 var pipeline: ?*c.SDL_GPUGraphicsPipeline = null;
 var vertex_buffer: *c.SDL_GPUBuffer = undefined;
@@ -41,6 +41,8 @@ var vertex_buffer: *c.SDL_GPUBuffer = undefined;
 var last_update_ns: u64 = 0;
 
 var should_exit = false;
+
+var show_imgui_demo_window = true;
 
 fn init() !void {
     // Initialize SDL.
@@ -58,11 +60,31 @@ fn init() !void {
     if (!c.SDL_ShowWindow(window)) sdl.err("SDL_ShowWindow");
 
     // Create the GPU device and claim the window for it.
-    // TODO: This is currently locked to vulkan; add support for other renderers and tell slang the appropriate one to compile for as well.
-    device = c.SDL_CreateGPUDevice(c.SDL_GPU_SHADERFORMAT_SPIRV, true, nullptr([*c]const u8)) orelse sdl.fatal("SDL_CreateGPUDevice");
+    device = c.SDL_CreateGPUDevice(c.SDL_GPU_SHADERFORMAT_SPIRV, true, null) orelse sdl.fatal("SDL_CreateGPUDevice");
     if (!c.SDL_ClaimWindowForGPUDevice(device, window)) sdl.fatal("SDL_ClaimWindowForGPUDevice");
     if (!c.SDL_SetGPUSwapchainParameters(device, window, c.SDL_GPU_SWAPCHAINCOMPOSITION_SDR, c.SDL_GPU_PRESENTMODE_MAILBOX)) sdl.fatal("SDL_SetGPUSwapchainParameters");
     if (!c.SDL_SetGPUAllowedFramesInFlight(device, FRAMES_IN_FLIGHT)) sdl.fatal("SDL_SetGPUAllowedFramesInFlight");
+
+    // Create an ImGui context.
+    // im_context = c.ImGui_CreateContext(null) orelse gui.fatal("igCreateContext");
+
+    // const io = c.ImGui_GetIO();
+    // io.*.ConfigFlags |= c.ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
+
+    // // Configure ImGui styling.
+    // const style = c.ImGui_GetStyle();
+    // c.ImGui_StyleColorsDark(style);
+    // c.ImGuiStyle_ScaleAllSizes(style, display_scale);
+    // c.ImGui_SetWindowFontScale(display_scale);
+
+    // // Setup ImGui rendering.
+    // if (!c.cImGui_ImplSDL3_InitForSDLGPU(window)) gui.fatal("cImGui_ImplSDL3_InitForSDLGPU");
+    // var imgui_init = c.ImGui_ImplSDLGPU3_InitInfo{
+    //     .Device = device,
+    //     .ColorTargetFormat = c.SDL_GetGPUSwapchainTextureFormat(device, window),
+    //     .MSAASamples = c.SDL_GPU_SAMPLECOUNT_1,
+    // };
+    // if (!c.cImGui_ImplSDLGPU3_Init(&imgui_init)) gui.fatal("cImGui_ImplSDLGPU3_Init");
 
     // Create the rendering pipeline.
     try load_pipeline();
@@ -123,49 +145,77 @@ fn update() !void {
 
 fn pollEvents() !void {
     var event: c.SDL_Event = undefined;
-    if (c.SDL_PollEvent(&event)) switch (event.type) {
-        c.SDL_EVENT_KEY_DOWN => if (!event.key.repeat) {
-            switch (event.key.scancode) {
-                c.SDL_SCANCODE_ESCAPE => should_exit = true,
-                c.SDL_SCANCODE_R => try load_pipeline(),
-                else => {},
-            }
-        },
-        c.SDL_EVENT_QUIT => should_exit = true,
-        else => {},
-    };
+    if (c.SDL_PollEvent(&event)) {
+        // _ = c.cImGui_ImplSDL3_ProcessEvent(&event);
+        switch (event.type) {
+            c.SDL_EVENT_KEY_DOWN => if (!event.key.repeat) {
+                switch (event.key.scancode) {
+                    c.SDL_SCANCODE_ESCAPE => should_exit = true,
+                    c.SDL_SCANCODE_R => try load_pipeline(),
+                    else => {},
+                }
+            },
+            c.SDL_EVENT_QUIT => should_exit = true,
+            else => {},
+        }
+    }
 }
 
 fn render(ticks: u64) !void {
     _ = ticks;
 
-    const cmd_buf = c.SDL_AcquireGPUCommandBuffer(device) orelse sdl.fatal("SDL_AcquireGPUCommandBuffer");
+    const cmd = c.SDL_AcquireGPUCommandBuffer(device) orelse sdl.fatal("SDL_AcquireGPUCommandBuffer");
 
     var swapchain_texture: ?*c.SDL_GPUTexture = null;
-    if (!c.SDL_WaitAndAcquireGPUSwapchainTexture(cmd_buf, window, &swapchain_texture, null, null)) {
+    if (!c.SDL_WaitAndAcquireGPUSwapchainTexture(cmd, window, &swapchain_texture, null, null)) {
         sdl.fatal("SDL_WaitAndAcquireGPUSwapchainTexture");
     }
-
-    if (swapchain_texture) |tex| {
-        const color_target_info = c.SDL_GPUColorTargetInfo{
-            .clear_color = .{ .r = 0, .g = 0, .b = 0, .a = 1 },
-            .texture = tex,
-            .load_op = c.SDL_GPU_LOADOP_CLEAR,
-            .store_op = c.SDL_GPU_STOREOP_STORE,
-        };
-
-        const render_pass = c.SDL_BeginGPURenderPass(cmd_buf, &[_]c.SDL_GPUColorTargetInfo{color_target_info}, 1, null) orelse sdl.fatal("SDL_BeginGPURenderPass");
-        defer c.SDL_EndGPURenderPass(render_pass);
-
-        c.SDL_BindGPUGraphicsPipeline(render_pass, pipeline.?);
-        c.SDL_BindGPUVertexBuffers(render_pass, 0, &[_]c.SDL_GPUBufferBinding{.{ .buffer = vertex_buffer, .offset = 0 }}, 1);
-        c.SDL_DrawGPUPrimitives(render_pass, 3, 1, 0, 0);
+    if (swapchain_texture == null) {
+        sdl.err("swapchain == null");
+        return;
     }
 
-    if (!c.SDL_SubmitGPUCommandBuffer(cmd_buf)) sdl.fatal("SDL_SubmitGPUCommandBuffer");
+    const tex = swapchain_texture.?;
+
+    // ImGui Rendering
+
+    // c.cImGui_ImplSDLGPU3_NewFrame();
+    // c.cImGui_ImplSDL3_NewFrame();
+    // c.ImGui_NewFrame();
+
+    // c.ImGui_ShowDemoWindow(&show_imgui_demo_window);
+
+    // c.ImGui_Render();
+    // const draw_data: *c.ImDrawData = c.ImGui_GetDrawData();
+    // c.cImgui_ImplSDLGPU3_PrepareDrawData(draw_data, cmd);
+
+    // SDL Rendering
+
+    const color_target_info = c.SDL_GPUColorTargetInfo{
+        .clear_color = .{ .r = 0, .g = 0, .b = 0, .a = 1 },
+        .texture = tex,
+        .load_op = c.SDL_GPU_LOADOP_CLEAR,
+        .store_op = c.SDL_GPU_STOREOP_STORE,
+    };
+
+    const rpass = c.SDL_BeginGPURenderPass(cmd, &[_]c.SDL_GPUColorTargetInfo{color_target_info}, 1, null) orelse sdl.fatal("SDL_BeginGPURenderPass");
+
+    c.SDL_BindGPUGraphicsPipeline(rpass, pipeline.?);
+    c.SDL_BindGPUVertexBuffers(rpass, 0, &[_]c.SDL_GPUBufferBinding{.{ .buffer = vertex_buffer, .offset = 0 }}, 1);
+    c.SDL_DrawGPUPrimitives(rpass, 3, 1, 0, 0);
+
+    // Submit the render pass.
+    // c.cImGui_ImplSDLGPU3_RenderDrawData(draw_data, cmd, rpass);
+    c.SDL_EndGPURenderPass(rpass);
+
+    if (!c.SDL_SubmitGPUCommandBuffer(cmd)) sdl.fatal("SDL_SubmitGPUCommandBuffer");
 }
 
 fn exit() !void {
+    // c.cImGui_ImplSDLGPU3_Shutdown();
+    // c.cImGui_ImplSDL3_Shutdown();
+    // c.ImGui_DestroyContext(null);
+
     c.SDL_ReleaseGPUGraphicsPipeline(device, pipeline);
     c.SDL_ReleaseGPUBuffer(device, vertex_buffer);
 
