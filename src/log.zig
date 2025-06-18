@@ -6,7 +6,7 @@ pub const gdn = TaggedLogger(.gdn, defaultLog, true);
 
 pub const gui = TaggedLogger(.gui, defaultLog, false);
 pub const sdl = TaggedLogger(.sdl, struct {
-    fn log(
+    inline fn log(
         comptime message_level: std.log.Level,
         comptime scope: @Type(.enum_literal),
         comptime format: []const u8,
@@ -27,7 +27,7 @@ pub fn oom() noreturn {
 
 fn TaggedLogger(comptime tag: @TypeOf(.enum_literal), comptime logFn: @TypeOf(defaultLog), comptime with_args: bool) type {
     const log = struct {
-        fn log(
+        inline fn log(
             comptime message_level: std.log.Level,
             comptime format: []const u8,
             args: anytype,
@@ -112,7 +112,7 @@ fn TaggedLogger(comptime tag: @TypeOf(.enum_literal), comptime logFn: @TypeOf(de
     }
 }
 
-fn defaultLog(
+inline fn defaultLog(
     comptime message_level: std.log.Level,
     comptime scope: @Type(.enum_literal),
     comptime format: []const u8,
@@ -121,9 +121,8 @@ fn defaultLog(
     if (@import("builtin").mode == .Debug) {
         // https://github.com/ziglang/zig/issues/7106
         const debug_info = std.debug.getSelfDebugInfo() catch unreachable;
-        var it = std.debug.StackIterator.init(@returnAddress(), null);
-        for (0..4) |_| _ = it.next();
-        const address: usize = it.next().?;
+
+        const address: usize = @returnAddress();
         const module = debug_info.getModuleForAddress(address - 1) catch unreachable;
         const symbol_info = module.getSymbolAtAddress(debug_info.allocator, address - 1) catch unreachable;
         defer if (symbol_info.source_location) |sl| debug_info.allocator.free(sl.file_name);

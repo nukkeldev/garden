@@ -33,7 +33,7 @@ var shader_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
 var window: *c.SDL_Window = undefined;
 var device: *c.SDL_GPUDevice = undefined;
-// var im_context: *c.ImGuiContext = undefined;
+var im_context: *c.ImGuiContext = undefined;
 
 var pipeline: ?*c.SDL_GPUGraphicsPipeline = null;
 var vertex_buffer: *c.SDL_GPUBuffer = undefined;
@@ -66,25 +66,24 @@ fn init() !void {
     if (!c.SDL_SetGPUAllowedFramesInFlight(device, FRAMES_IN_FLIGHT)) sdl.fatal("SDL_SetGPUAllowedFramesInFlight");
 
     // Create an ImGui context.
-    // im_context = c.ImGui_CreateContext(null) orelse gui.fatal("igCreateContext");
+    im_context = c.ImGui_CreateContext(null) orelse gui.fatal("igCreateContext");
 
-    // const io = c.ImGui_GetIO();
-    // io.*.ConfigFlags |= c.ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
+    const io = c.ImGui_GetIO();
+    io.*.ConfigFlags |= c.ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
 
-    // // Configure ImGui styling.
-    // const style = c.ImGui_GetStyle();
-    // c.ImGui_StyleColorsDark(style);
-    // c.ImGuiStyle_ScaleAllSizes(style, display_scale);
-    // c.ImGui_SetWindowFontScale(display_scale);
+    // Configure ImGui styling.
+    const style = c.ImGui_GetStyle();
+    c.ImGui_StyleColorsDark(style);
+    c.ImGuiStyle_ScaleAllSizes(style, display_scale);
 
-    // // Setup ImGui rendering.
-    // if (!c.cImGui_ImplSDL3_InitForSDLGPU(window)) gui.fatal("cImGui_ImplSDL3_InitForSDLGPU");
-    // var imgui_init = c.ImGui_ImplSDLGPU3_InitInfo{
-    //     .Device = device,
-    //     .ColorTargetFormat = c.SDL_GetGPUSwapchainTextureFormat(device, window),
-    //     .MSAASamples = c.SDL_GPU_SAMPLECOUNT_1,
-    // };
-    // if (!c.cImGui_ImplSDLGPU3_Init(&imgui_init)) gui.fatal("cImGui_ImplSDLGPU3_Init");
+    // Setup ImGui rendering.
+    if (!c.cImGui_ImplSDL3_InitForSDLGPU(window)) gui.fatal("cImGui_ImplSDL3_InitForSDLGPU");
+    var imgui_init = c.ImGui_ImplSDLGPU3_InitInfo{
+        .Device = device,
+        .ColorTargetFormat = c.SDL_GetGPUSwapchainTextureFormat(device, window),
+        .MSAASamples = c.SDL_GPU_SAMPLECOUNT_1,
+    };
+    if (!c.cImGui_ImplSDLGPU3_Init(&imgui_init)) gui.fatal("cImGui_ImplSDLGPU3_Init");
 
     // Create the rendering pipeline.
     try load_pipeline();
@@ -146,7 +145,7 @@ fn update() !void {
 fn pollEvents() !void {
     var event: c.SDL_Event = undefined;
     if (c.SDL_PollEvent(&event)) {
-        // _ = c.cImGui_ImplSDL3_ProcessEvent(&event);
+        _ = c.cImGui_ImplSDL3_ProcessEvent(&event);
         switch (event.type) {
             c.SDL_EVENT_KEY_DOWN => if (!event.key.repeat) {
                 switch (event.key.scancode) {
@@ -179,15 +178,15 @@ fn render(ticks: u64) !void {
 
     // ImGui Rendering
 
-    // c.cImGui_ImplSDLGPU3_NewFrame();
-    // c.cImGui_ImplSDL3_NewFrame();
-    // c.ImGui_NewFrame();
+    c.cImGui_ImplSDLGPU3_NewFrame();
+    c.cImGui_ImplSDL3_NewFrame();
+    c.ImGui_NewFrame();
 
-    // c.ImGui_ShowDemoWindow(&show_imgui_demo_window);
+    c.ImGui_ShowDemoWindow(&show_imgui_demo_window);
 
-    // c.ImGui_Render();
-    // const draw_data: *c.ImDrawData = c.ImGui_GetDrawData();
-    // c.cImgui_ImplSDLGPU3_PrepareDrawData(draw_data, cmd);
+    c.ImGui_Render();
+    const draw_data: *c.ImDrawData = c.ImGui_GetDrawData();
+    c.cImgui_ImplSDLGPU3_PrepareDrawData(draw_data, cmd);
 
     // SDL Rendering
 
@@ -212,9 +211,9 @@ fn render(ticks: u64) !void {
 }
 
 fn exit() !void {
-    // c.cImGui_ImplSDLGPU3_Shutdown();
-    // c.cImGui_ImplSDL3_Shutdown();
-    // c.ImGui_DestroyContext(null);
+    c.cImGui_ImplSDLGPU3_Shutdown();
+    c.cImGui_ImplSDL3_Shutdown();
+    c.ImGui_DestroyContext(null);
 
     c.SDL_ReleaseGPUGraphicsPipeline(device, pipeline);
     c.SDL_ReleaseGPUBuffer(device, vertex_buffer);

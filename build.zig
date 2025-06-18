@@ -24,7 +24,19 @@ pub fn build(b: *std.Build) !void {
 
     // Dependencies
 
-    exe_mod.linkSystemLibrary("SDL3", .{});
+    const sdl_dep = b.dependency("sdl", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.linkLibrary(sdl_dep.artifact("SDL3"));
+
+    const cimgui_dep = b.dependency("cimgui_zig", .{
+        .target = target,
+        .optimize = optimize,
+        .platform = cimgui.Platform.SDLGPU3,
+        .renderer = cimgui.Renderer.Vulkan,
+    });
+    exe.linkLibrary(cimgui_dep.artifact("cimgui"));
 
     const zm = b.dependency("zm", .{});
     exe_mod.addImport("zm", zm.module("zm"));
