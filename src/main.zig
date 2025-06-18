@@ -20,7 +20,7 @@ const NS_PER_S = 1_000_000_000.0;
 // Configuration
 
 const INITIAL_WINDOW_SIZE = .{ .width = 1024, .height = 1024 };
-const WINDOW_FLAGS = c.SDL_WINDOW_RESIZABLE | c.SDL_WINDOW_HIDDEN | c.SDL_WINDOW_HIGH_PIXEL_DENSITY;
+const WINDOW_FLAGS = c.SDL_WINDOW_RESIZABLE | c.SDL_WINDOW_HIDDEN | c.SDL_WINDOW_HIGH_PIXEL_DENSITY | c.SDL_WINDOW_VULKAN;
 
 const TARGET_FRAMERATE: f32 = 60.0;
 const TARGET_FRAMETIME_NS: u64 = @intFromFloat(NS_PER_S / 60.0);
@@ -45,6 +45,8 @@ var should_exit = false;
 var show_imgui_demo_window = true;
 
 fn init() !void {
+    c.SDL_SetMainReady();
+
     // Initialize SDL.
     if (!c.SDL_Init(c.SDL_INIT_VIDEO)) sdl.fatal("SDL_Init(c.SDL_INIT_VIDEO)");
 
@@ -60,7 +62,10 @@ fn init() !void {
     if (!c.SDL_ShowWindow(window)) sdl.err("SDL_ShowWindow");
 
     // Create the GPU device and claim the window for it.
-    device = c.SDL_CreateGPUDevice(c.SDL_GPU_SHADERFORMAT_SPIRV, true, null) orelse sdl.fatal("SDL_CreateGPUDevice");
+    // TODO: If `debug_mode` is enabled, `c.cImGui_ImplSDLGPU3_RenderDrawData` below crashes
+    // with an a load of some random value not being "valid for type 'bool'". I am not sure
+    // how to fix this currently but it appears to be some sort of use-after-free?
+    device = c.SDL_CreateGPUDevice(c.SDL_GPU_SHADERFORMAT_SPIRV, false, null) orelse sdl.fatal("SDL_CreateGPUDevice");
     if (!c.SDL_ClaimWindowForGPUDevice(device, window)) sdl.fatal("SDL_ClaimWindowForGPUDevice");
     if (!c.SDL_SetGPUSwapchainParameters(device, window, c.SDL_GPU_SWAPCHAINCOMPOSITION_SDR, c.SDL_GPU_PRESENTMODE_MAILBOX)) sdl.fatal("SDL_SetGPUSwapchainParameters");
     if (!c.SDL_SetGPUAllowedFramesInFlight(device, FRAMES_IN_FLIGHT)) sdl.fatal("SDL_SetGPUAllowedFramesInFlight");
@@ -197,20 +202,22 @@ fn render(ticks: u64) !void {
         .store_op = c.SDL_GPU_STOREOP_STORE,
     };
 
-    const rpass = c.SDL_BeginGPURenderPass(cmd, &[_]c.SDL_GPUColorTargetInfo{color_target_info}, 1, null) orelse sdl.fatal("SDL_BeginGPURenderPass");
+    const rpass = c.SDL_BeginGPURenderPass(cmd, &color_target_info, 1, null) orelse sdl.fatal("SDL_BeginGPURenderPass");
 
     c.SDL_BindGPUGraphicsPipeline(rpass, pipeline.?);
     c.SDL_BindGPUVertexBuffers(rpass, 0, &[_]c.SDL_GPUBufferBinding{.{ .buffer = vertex_buffer, .offset = 0 }}, 1);
     c.SDL_DrawGPUPrimitives(rpass, 3, 1, 0, 0);
 
     // Submit the render pass.
-    // c.cImGui_ImplSDLGPU3_RenderDrawData(draw_data, cmd, rpass);
+    c.cImGui_ImplSDLGPU3_RenderDrawData(draw_data, cmd, rpass);
     c.SDL_EndGPURenderPass(rpass);
 
     if (!c.SDL_SubmitGPUCommandBuffer(cmd)) sdl.fatal("SDL_SubmitGPUCommandBuffer");
 }
 
 fn exit() !void {
+    _ = c.SDL_WaitForGPUIdle(device);
+
     c.cImGui_ImplSDLGPU3_Shutdown();
     c.cImGui_ImplSDL3_Shutdown();
     c.ImGui_DestroyContext(null);
@@ -218,14 +225,20 @@ fn exit() !void {
     c.SDL_ReleaseGPUGraphicsPipeline(device, pipeline);
     c.SDL_ReleaseGPUBuffer(device, vertex_buffer);
 
+    c.SDL_ReleaseWindowFromGPUDevice(device, window);
+    c.SDL_DestroyGPUDevice(device);
+    c.SDL_DestroyWindow(window);
+
+    c.SDL_Quit();
+
     shader_arena.deinit();
 }
 
 fn load_pipeline() !void {
     if (pipeline != null) c.SDL_ReleaseGPUGraphicsPipeline(device, pipeline);
 
-    const compiled_vertex_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/shaders/shader.slang", .Vertex, true)).?;
-    const compiled_fragment_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/shaders/shader.slang", .Fragment, true)).?;
+    const compiled_vertex_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/shaders/shader.slang", .Vertex, pipeline == null, true)).?;
+    const compiled_fragment_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/shaders/shader.slang", .Fragment, pipeline == null, true)).?;
 
     const vertex_layout = gpu.slang.ShaderLayout.parseLeaky(shader_arena.allocator(), compiled_vertex_shader.layout).?;
     const fragment_layout = gpu.slang.ShaderLayout.parseLeaky(shader_arena.allocator(), compiled_fragment_shader.layout).?;
@@ -243,7 +256,7 @@ pub fn main() void {
 }
 
 fn sdlMainWrapper(_: c_int, _: [*c][*c]u8) callconv(.c) c_int {
-    sdlMain() catch |e| gdn.fatal("{}", .{e});
+    sdlMain() catch |e| gdn.fatal("Fatal Error: {}", .{e});
     return 1;
 }
 

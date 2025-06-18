@@ -1,8 +1,13 @@
 const std = @import("std");
 const log = @import("../log.zig");
 
+const EMBEDDED_VERTEX_SHADER = @embedFile("../shaders/compiled/shader.vert.spv");
+const EMBEDDED_VERTEX_SHADER_LAYOUT = @embedFile("../shaders/compiled/shader.vert.layout");
+const EMBEDDED_FRAGMENT_SHADER = @embedFile("../shaders/compiled/shader.frag.spv");
+const EMBEDDED_FRAGMENT_SHADER_LAYOUT = @embedFile("../shaders/compiled/shader.frag.layout");
+
 pub const CompiledShader = struct {
-    allocator: std.mem.Allocator,
+    allocator: ?std.mem.Allocator,
 
     spv: []const u8,
     layout: []const u8,
@@ -13,12 +18,21 @@ pub const CompiledShader = struct {
     };
 
     /// Compile a `.slang` shader for the `stage` and output the resultant file contents.
-    pub fn compileBlocking(allocator: std.mem.Allocator, path: []const u8, stage: Stage, return_contents: bool) !?@This() {
+    pub fn compileBlocking(allocator: std.mem.Allocator, path: []const u8, stage: Stage, embedded: bool, return_contents: bool) !?@This() {
         // Convert stage enum into file extension and entrypoint.
         const ext = switch (stage) {
             .Vertex => "vertex",
             .Fragment => "fragment",
         };
+
+        if (embedded) {
+            log.gdn.debug("Using pre-compiled {s} shader.", .{ext});
+            return switch (stage) {
+                .Vertex => .{ .allocator = null, .spv = EMBEDDED_VERTEX_SHADER, .layout = EMBEDDED_VERTEX_SHADER_LAYOUT },
+                .Fragment => .{ .allocator = null, .spv = EMBEDDED_FRAGMENT_SHADER, .layout = EMBEDDED_FRAGMENT_SHADER_LAYOUT },
+            };
+        }
+
         const entry = switch (stage) {
             .Vertex => "vertexMain",
             .Fragment => "fragmentMain",
@@ -84,7 +98,9 @@ pub const CompiledShader = struct {
     }
 
     pub fn deinit(self: @This()) void {
-        self.allocator.free(self.spv);
-        self.allocator.free(self.layout);
+        if (self.allocator) |a| {
+            a.free(self.spv);
+            a.free(self.layout);
+        }
     }
 };

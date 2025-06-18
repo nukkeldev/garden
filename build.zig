@@ -27,6 +27,7 @@ pub fn build(b: *std.Build) !void {
     const sdl_dep = b.dependency("sdl", .{
         .target = target,
         .optimize = optimize,
+        .sanitize_c = .full,
     });
     exe.linkLibrary(sdl_dep.artifact("SDL3"));
 
@@ -75,11 +76,7 @@ pub fn build(b: *std.Build) !void {
     const check_step = b.step("check", "Checks");
     check_step.dependOn(&exe.step);
 
-    // Command: (deep-)clean
-
-    const deep_clean_step = b.step("deep-clean", "Cleans deeply");
-    deep_clean_step.dependOn(&b.addRemoveDirTree(b.path(".zig-cache")).step);
-    deep_clean_step.dependOn(&b.addRemoveDirTree(b.path("zig-out")).step);
+    // Command: clean
 
     const clean_step = b.step("clean", "Cleans");
     clean_step.dependOn(&b.addRemoveDirTree(b.path("zig-out")).step);
