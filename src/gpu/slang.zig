@@ -167,6 +167,9 @@ pub const ShaderLayout = struct {
                     },
                 },
             },
+            .rasterizer_state = .{
+                .front_face = c.SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE,
+            },
         });
         if (pipeline == null) log.sdl.err("SDL_CreateGPUGraphicsPipeline");
 
