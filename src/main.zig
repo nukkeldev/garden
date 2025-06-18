@@ -3,6 +3,8 @@ const std = @import("std");
 const gpu = @import("gpu.zig");
 const ffi = @import("ffi.zig");
 const log = @import("log.zig");
+const ecs = @import("ecs");
+const components = @import("components.zig");
 const zm = @import("zm");
 
 const gdn = log.gdn;
@@ -26,9 +28,10 @@ const FRAMES_IN_FLIGHT = 3;
 
 const MOVEMENT_SPEED: f32 = 1.0;
 
-// App
+// State
 
 var shader_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+var ecs_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
 var window: *c.SDL_Window = undefined;
 var device: *c.SDL_GPUDevice = undefined;
@@ -37,8 +40,17 @@ var im_context: *c.ImGuiContext = undefined;
 var pipeline: ?*c.SDL_GPUGraphicsPipeline = null;
 var vertex_buffer: *c.SDL_GPUBuffer = undefined;
 
-var triangle_pos: zm.Vec3f = .{ 0, 0, 0 };
-var triangle_vel: zm.Vec3f = .{ 0, 0, 0 };
+var reg: ecs.Registry = undefined;
+
+var e_player: ecs.Entity = undefined;
+var e_camera: ecs.Entity = undefined;
+
+var t_player: *components.Transform1 = undefined;
+var v_player: *components.Transform2 = undefined;
+var t_camera: *components.Transform1 = undefined;
+
+var transformables: ecs.OwningGroup = undefined;
+
 var proj_matrix: zm.Mat4f = zm.Mat4f.perspective(std.math.degreesToRadians(60.0), 1.0, 0.05, 100.0);
 
 var last_update_ns: u64 = 0;
@@ -46,6 +58,8 @@ var should_exit = false;
 var show_imgui_demo_window = true;
 
 var keyboard_state: [*c]const bool = undefined;
+
+// Functions
 
 fn init() !void {
     c.SDL_SetMainReady();
@@ -138,7 +152,23 @@ fn init() !void {
     // Set the start time.
     last_update_ns = c.SDL_GetTicksNS();
 
+    // Get a pointer to the keyboard state.
     keyboard_state = c.SDL_GetKeyboardState(null);
+
+    // Setup initial entities with the ECS.
+    reg = .init(ecs_arena.allocator());
+
+    e_camera = reg.create();
+    reg.add(e_camera, components.Transform1{ .x = .{ 0, 3, 3 } });
+    reg.addTypes(e_camera, .{ components.Transform2, components.Transform3 });
+    t_camera = reg.get(components.Transform1, e_camera);
+
+    e_player = reg.create();
+    reg.addTypes(e_player, .{ components.Transform1, components.Transform2, components.Transform3 });
+    t_player = reg.get(components.Transform1, e_player);
+    v_player = reg.get(components.Transform2, e_player);
+
+    transformables = reg.group(.{ components.Transform1, components.Transform2, components.Transform3 }, .{}, .{});
 }
 
 fn update() !void {
@@ -150,15 +180,14 @@ fn update() !void {
     //     c.SDL_DelayNS(@intCast(TARGET_FRAMETIME_NS - (ticks_ns - last_update_ns)));
     // }
 
-    try pollEvents(dt);
+    try pollEvents();
+    try updateSystems(dt);
     try render(ticks_ns, dt);
 
     last_update_ns = ticks_ns;
 }
 
-fn pollEvents(dt: u64) !void {
-    const dt_s = @as(f32, @floatFromInt(dt)) / 1e9;
-
+fn pollEvents() !void {
     var event: c.SDL_Event = undefined;
     if (c.SDL_PollEvent(&event)) {
         _ = c.cImGui_ImplSDL3_ProcessEvent(&event);
@@ -177,10 +206,24 @@ fn pollEvents(dt: u64) !void {
         }
     }
 
-    triangle_vel[0] = @as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_W]))) - @as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_S]))) * MOVEMENT_SPEED;
-    triangle_vel[2] = @as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_D]))) - @as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_A]))) * MOVEMENT_SPEED;
+    v_player.v[0] = @as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_D]))) - @as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_A]))) * MOVEMENT_SPEED;
+    v_player.v[2] = @as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_W]))) - @as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_S]))) * MOVEMENT_SPEED;
+}
 
-    triangle_pos = triangle_pos + triangle_vel * zm.Vec3f{ dt_s, dt_s, dt_s };
+fn updateSystems(dt: u64) !void {
+    const dt_s = @as(f32, @floatFromInt(dt)) / 1e9;
+    const dt_s3: zm.Vec3f = .{ dt_s, dt_s, dt_s };
+
+    var iter_23 = transformables.iterator(struct { vel: *components.Transform2, acc: *components.Transform3 });
+    while (iter_23.next()) |entity| {
+        entity.vel.*.v += entity.acc.*.a * dt_s3;
+        entity.vel.*.vr += entity.acc.*.ar * dt_s3;
+    }
+    var iter_12 = transformables.iterator(struct { pos: *components.Transform1, vel: *components.Transform2 });
+    while (iter_12.next()) |entity| {
+        entity.pos.*.x += entity.vel.*.v * dt_s3;
+        entity.pos.*.r += entity.vel.*.vr * dt_s3;
+    }
 }
 
 fn render(ticks: u64, dt: u64) !void {
@@ -204,7 +247,7 @@ fn render(ticks: u64, dt: u64) !void {
     c.ImGui_NewFrame();
 
     _ = c.ImGui_Begin("-", null, 0);
-    c.ImGui_Text("FPS: %.2f | Frame Time: %.2f ms\nPosition: (%.2f, %.2f, %.2f)", 1000.0 / frame_time, frame_time, triangle_pos[0], triangle_pos[1], triangle_pos[2]);
+    c.ImGui_Text("FPS: %.2f | Frame Time: %.2f ms\nPlayer Position: (%.2f, %.2f, %.2f)", 1000.0 / frame_time, frame_time, t_player.x[0], t_player.x[1], t_player.x[2]);
     c.ImGui_End();
 
     c.ImGui_Render();
@@ -222,8 +265,8 @@ fn render(ticks: u64, dt: u64) !void {
 
     const rpass = c.SDL_BeginGPURenderPass(cmd, &color_target_info, 1, null) orelse sdl.fatal("SDL_BeginGPURenderPass");
 
-    const model_matrix = zm.Mat4f.translationVec3(triangle_pos).scale(0.5);
-    const view_matrix = zm.Mat4f.lookAt(.{ 0, 3, 3 }, .{ 0, 0, 0 }, .{ 0, 1, 0 });
+    const model_matrix = zm.Mat4f.translationVec3(t_player.x).scale(0.5);
+    const view_matrix = zm.Mat4f.lookAt(t_camera.x, .{ 0, 0, 0 }, .{ 0, 1, 0 });
     const model_view_proj = proj_matrix.multiply(view_matrix).multiply(model_matrix).transpose();
 
     c.SDL_BindGPUGraphicsPipeline(rpass, pipeline.?);
@@ -256,6 +299,7 @@ fn exit() !void {
     c.SDL_Quit();
 
     shader_arena.deinit();
+    ecs_arena.deinit();
 }
 
 fn load_pipeline() !void {

@@ -9,5 +9,5 @@ A performance-focused multi-media engine.
     - [x] Shader cross-compilation with Slang
         - [x] Shader reflection for pipeline creation
         - [x] Online shader reloading
-    - [ ] `imgui`
-    - [ ] Some method of abstracting "Objects"
+    - [x] `imgui`
+- [ ] Engine Architecture

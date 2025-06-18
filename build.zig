@@ -42,6 +42,9 @@ pub fn build(b: *std.Build) !void {
     const zm = b.dependency("zm", .{});
     exe_mod.addImport("zm", zm.module("zm"));
 
+    const entt = b.dependency("entt", .{});
+    exe_mod.addImport("ecs", entt.module("zig-ecs"));
+
     // Command: build-shaders
 
     const build_shaders = b.step("build-shaders", "Builds all of the shaders.");
