@@ -101,16 +101,11 @@ fn buildShaders(b: *std.Build) !*std.Build.Step {
         "vertexMain",
         "-stage",
         "vertex",
-        "-target",
-        "spirv",
-        "-profile",
-        "spirv_1_0",
         "-o",
         "src/shaders/compiled/shader.vert.spv",
         "-fvk-use-entrypoint-name",
         "-reflection-json",
         "src/shaders/compiled/shader.vert.layout",
-        "-emit-spirv-via-glsl",
     });
     vert.step.dependOn(&mkdir.step);
     step.dependOn(&vert.step);
@@ -122,16 +117,11 @@ fn buildShaders(b: *std.Build) !*std.Build.Step {
         "fragmentMain",
         "-stage",
         "fragment",
-        "-target",
-        "spirv",
-        "-profile",
-        "spirv_1_0",
         "-o",
         "src/shaders/compiled/shader.frag.spv",
         "-fvk-use-entrypoint-name",
         "-reflection-json",
         "src/shaders/compiled/shader.frag.layout",
-        "-emit-spirv-via-glsl",
     });
     frag.step.dependOn(&mkdir.step);
     step.dependOn(&frag.step);
