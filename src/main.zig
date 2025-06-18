@@ -3,6 +3,7 @@ const std = @import("std");
 const gpu = @import("gpu.zig");
 const ffi = @import("ffi.zig");
 const log = @import("log.zig");
+const zm = @import("zm");
 
 const gdn = log.gdn;
 const sdl = log.sdl;
@@ -38,10 +39,10 @@ var im_context: *c.ImGuiContext = undefined;
 var pipeline: ?*c.SDL_GPUGraphicsPipeline = null;
 var vertex_buffer: *c.SDL_GPUBuffer = undefined;
 
+var proj_matrix: zm.Mat4f = zm.Mat4f.perspective(std.math.degreesToRadians(60.0), 1.0, 0.05, 100.0);
+
 var last_update_ns: u64 = 0;
-
 var should_exit = false;
-
 var show_imgui_demo_window = true;
 
 fn init() !void {
@@ -166,7 +167,7 @@ fn pollEvents() !void {
 }
 
 fn render(ticks: u64) !void {
-    _ = ticks;
+    const ticks_s: f32 = @as(f32, @floatFromInt(ticks)) / NS_PER_S;
 
     const cmd = c.SDL_AcquireGPUCommandBuffer(device) orelse sdl.fatal("SDL_AcquireGPUCommandBuffer");
 
@@ -174,10 +175,7 @@ fn render(ticks: u64) !void {
     if (!c.SDL_WaitAndAcquireGPUSwapchainTexture(cmd, window, &swapchain_texture, null, null)) {
         sdl.fatal("SDL_WaitAndAcquireGPUSwapchainTexture");
     }
-    if (swapchain_texture == null) {
-        sdl.err("swapchain == null");
-        return;
-    }
+    if (swapchain_texture == null) return;
 
     const tex = swapchain_texture.?;
 
@@ -187,7 +185,7 @@ fn render(ticks: u64) !void {
     c.cImGui_ImplSDL3_NewFrame();
     c.ImGui_NewFrame();
 
-    c.ImGui_ShowDemoWindow(&show_imgui_demo_window);
+    // c.ImGui_ShowDemoWindow(&show_imgui_demo_window);
 
     c.ImGui_Render();
     const draw_data: *c.ImDrawData = c.ImGui_GetDrawData();
@@ -204,7 +202,12 @@ fn render(ticks: u64) !void {
 
     const rpass = c.SDL_BeginGPURenderPass(cmd, &color_target_info, 1, null) orelse sdl.fatal("SDL_BeginGPURenderPass");
 
+    const view_matrix = zm.Mat4f.lookAt(.{ @cos(ticks_s) * 3, 3, @sin(ticks_s) * 3 }, .{ 0, 0, 0 }, .{ 0, 1, 0 });
+    const model_view_proj = proj_matrix.multiply(view_matrix).scale(0.5).transpose();
+
     c.SDL_BindGPUGraphicsPipeline(rpass, pipeline.?);
+
+    c.SDL_PushGPUVertexUniformData(cmd, 0, @ptrCast(&model_view_proj), @sizeOf(zm.Mat4f));
     c.SDL_BindGPUVertexBuffers(rpass, 0, &[_]c.SDL_GPUBufferBinding{.{ .buffer = vertex_buffer, .offset = 0 }}, 1);
     c.SDL_DrawGPUPrimitives(rpass, 3, 1, 0, 0);
 
