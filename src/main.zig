@@ -27,6 +27,7 @@ const TARGET_FRAMETIME_NS: u64 = @intFromFloat(1e9 / 60.0);
 const FRAMES_IN_FLIGHT = 3;
 
 const MOVEMENT_SPEED: f32 = 1.0;
+const ROTATION_SPEED: f32 = 4.0;
 
 // State
 
@@ -39,6 +40,7 @@ var im_context: *c.ImGuiContext = undefined;
 
 var pipeline: ?*c.SDL_GPUGraphicsPipeline = null;
 var vertex_buffer: *c.SDL_GPUBuffer = undefined;
+var index_buffer: *c.SDL_GPUBuffer = undefined;
 
 var reg: ecs.Registry = undefined;
 
@@ -110,44 +112,26 @@ fn init() !void {
     // Create the rendering pipeline.
     try load_pipeline();
 
-    // Create vertex buffer.
-    vertex_buffer = c.SDL_CreateGPUBuffer(device, &.{
-        .usage = c.SDL_GPU_BUFFERUSAGE_VERTEX,
-        .size = (@sizeOf(f32) * 3 + @sizeOf(f32) * 3) * 6,
-    }) orelse sdl.fatal("SDL_CreateGPUBuffer(SDL_GPU_BUFFERUSAGE_VERTEX)");
+    // Create vertex and index buffers.
+    vertex_buffer = gpu.initBuffer([6]f32, 8, .{
+        .{ -1, -1, -1, 0.247, 0.475, 0.757 }, // #3F79C1,
+        .{ 1, -1, -1, 0.851, 0.306, 0.451 }, // #D94E73
+        .{ 1, 1, -1, 0.482, 0.784, 0.290 }, // #7BC84A
+        .{ -1, 1, -1, 0.965, 0.773, 0.165 }, // #F6C52A
+        .{ -1, -1, 1, 0.541, 0.306, 0.812 }, // #8A4ECF
+        .{ 1, -1, 1, 0.180, 0.776, 0.721 }, // #2EC6B8
+        .{ 1, 1, 1, 0.929, 0.416, 0.184 }, // #ED6A2F
+        .{ -1, 1, 1, 0.282, 0.635, 0.878 }, // #489ADF
+    }, device);
 
-    const transfer_buffer = c.SDL_CreateGPUTransferBuffer(device, &.{
-        .usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
-        .size = (@sizeOf(f32) * 3 + @sizeOf(f32) * 3) * 6,
-    }) orelse sdl.fatal("SDL_CreateGPUTransferBuffer");
-
-    {
-        const transfer_data: *[6][6]f32 = @ptrCast(@alignCast(c.SDL_MapGPUTransferBuffer(device, transfer_buffer, false) orelse sdl.fatal("SDL_MapGPUTransferBuffer")));
-        transfer_data[0] = [_]f32{ 0.5, 0.5, 0, 1, 0, 0 };
-        transfer_data[1] = [_]f32{ -0.5, 0.5, 0, 0, 1, 0 };
-        transfer_data[2] = [_]f32{ -0.5, -0.5, 0, 0, 0, 1 };
-        transfer_data[3] = [_]f32{ 0.5, 0.5, 0, 1, 0, 0 };
-        transfer_data[4] = [_]f32{ -0.5, -0.5, 0, 0, 0, 1 };
-        transfer_data[5] = [_]f32{ 0.5, -0.5, 0, 0, 1, 0 };
-    }
-
-    c.SDL_UnmapGPUTransferBuffer(device, transfer_buffer);
-
-    const upload_cmd_buf = c.SDL_AcquireGPUCommandBuffer(device) orelse sdl.fatal("SDL_AcquireGPUCommandBuffer");
-    const copy_pass = c.SDL_BeginGPUCopyPass(upload_cmd_buf) orelse sdl.fatal("SDL_BeginGPUCopyPass");
-
-    c.SDL_UploadToGPUBuffer(copy_pass, &.{
-        .transfer_buffer = transfer_buffer,
-        .offset = 0,
-    }, &.{
-        .buffer = vertex_buffer,
-        .offset = 0,
-        .size = (@sizeOf(f32) * 3 + @sizeOf(f32) * 3) * 6,
-    }, false);
-
-    c.SDL_EndGPUCopyPass(copy_pass);
-    if (!c.SDL_SubmitGPUCommandBuffer(upload_cmd_buf)) sdl.fatal("SDL_SubmitGPUCommandBuffer");
-    c.SDL_ReleaseGPUTransferBuffer(device, transfer_buffer);
+    index_buffer = gpu.initBuffer(u16, 36, .{
+        0, 2, 1, 2, 0, 3, // front
+        1, 6, 5, 6, 1, 2, // right
+        5, 7, 4, 7, 5, 6, // back
+        4, 3, 0, 3, 4, 7, // left
+        3, 6, 2, 6, 3, 7, // top
+        4, 1, 5, 1, 4, 0, // bottom
+    }, device);
 
     // Set the start time.
     last_update_ns = c.SDL_GetTicksNS();
@@ -206,8 +190,9 @@ fn pollEvents() !void {
         }
     }
 
-    v_player.v[0] = @as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_D]))) - @as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_A]))) * MOVEMENT_SPEED;
-    v_player.v[2] = @as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_W]))) - @as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_S]))) * MOVEMENT_SPEED;
+    v_player.v[0] = (@as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_D]))) - @as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_A])))) * MOVEMENT_SPEED;
+    v_player.v[2] = (@as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_S]))) - @as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_W])))) * MOVEMENT_SPEED;
+    v_player.vr[1] = (@as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_Q]))) - @as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_E])))) * ROTATION_SPEED;
 }
 
 fn updateSystems(dt: u64) !void {
@@ -265,7 +250,7 @@ fn render(ticks: u64, dt: u64) !void {
 
     const rpass = c.SDL_BeginGPURenderPass(cmd, &color_target_info, 1, null) orelse sdl.fatal("SDL_BeginGPURenderPass");
 
-    const model_matrix = zm.Mat4f.translationVec3(t_player.x).scale(0.5);
+    const model_matrix = zm.Mat4f.translationVec3(t_player.x).multiply(.rotation(.{ 0, 1, 0 }, t_player.r[1])).multiply(.scaling(0.5, 0.5, 0.5));
     const view_matrix = zm.Mat4f.lookAt(t_camera.x, .{ 0, 0, 0 }, .{ 0, 1, 0 });
     const model_view_proj = proj_matrix.multiply(view_matrix).multiply(model_matrix).transpose();
 
@@ -273,7 +258,8 @@ fn render(ticks: u64, dt: u64) !void {
 
     c.SDL_PushGPUVertexUniformData(cmd, 0, @ptrCast(&model_view_proj), @sizeOf(zm.Mat4f));
     c.SDL_BindGPUVertexBuffers(rpass, 0, &[_]c.SDL_GPUBufferBinding{.{ .buffer = vertex_buffer, .offset = 0 }}, 1);
-    c.SDL_DrawGPUPrimitives(rpass, 6, 1, 0, 0);
+    c.SDL_BindGPUIndexBuffer(rpass, &[_]c.SDL_GPUBufferBinding{.{ .buffer = index_buffer, .offset = 0 }}, c.SDL_GPU_INDEXELEMENTSIZE_16BIT);
+    c.SDL_DrawGPUIndexedPrimitives(rpass, 36, 1, 0, 0, 0);
 
     // Submit the render pass.
     c.cImGui_ImplSDLGPU3_RenderDrawData(draw_data, cmd, rpass);

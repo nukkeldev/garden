@@ -168,6 +168,7 @@ pub const ShaderLayout = struct {
                 },
             },
             .rasterizer_state = .{
+                .cull_mode = c.SDL_GPU_CULLMODE_BACK,
                 .front_face = c.SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE,
             },
         });
