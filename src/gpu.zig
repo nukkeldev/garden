@@ -5,7 +5,7 @@ pub const compile = @import("gpu/compile.zig");
 
 const sdl = @import("log.zig").sdl;
 
-pub fn initBuffer(comptime T: type, len: comptime_int, data: [len]T, device: *c.SDL_GPUDevice) *c.SDL_GPUBuffer {
+pub fn initBuffer(comptime T: type, len: u32, data: []const T, device: *c.SDL_GPUDevice) *c.SDL_GPUBuffer {
     const data_size = @sizeOf(T) * len;
 
     const buffer = c.SDL_CreateGPUBuffer(device, &.{
@@ -19,8 +19,8 @@ pub fn initBuffer(comptime T: type, len: comptime_int, data: [len]T, device: *c.
     }) orelse sdl.fatal("SDL_CreateGPUTransferBuffer");
 
     {
-        const transfer_data: *[len]T = @ptrCast(@alignCast(c.SDL_MapGPUTransferBuffer(device, transfer_buffer, true) orelse sdl.fatal("SDL_MapGPUTransferBuffer")));
-        transfer_data.* = data;
+        const transfer_data: [*]T = @ptrCast(@alignCast(c.SDL_MapGPUTransferBuffer(device, transfer_buffer, true) orelse sdl.fatal("SDL_MapGPUTransferBuffer")));
+        @memcpy(transfer_data, data);
     }
 
     c.SDL_UnmapGPUTransferBuffer(device, transfer_buffer);

@@ -45,6 +45,9 @@ pub fn build(b: *std.Build) !void {
     const entt = b.dependency("entt", .{});
     exe_mod.addImport("ecs", entt.module("zig-ecs"));
 
+    const obj_mod = b.dependency("obj", .{ .target = target, .optimize = optimize }).module("obj");
+    exe_mod.addImport("obj", obj_mod);
+
     // Command: build-shaders
 
     const build_shaders = b.step("build-shaders", "Builds all of the shaders.");
@@ -99,7 +102,7 @@ fn buildShaders(b: *std.Build) !*std.Build.Step {
 
     const vert = b.addSystemCommand(&.{
         "slangc",
-        "src/shaders/shader.slang",
+        "src/assets/shaders/shader.slang",
         "-entry",
         "vertexMain",
         "-stage",
@@ -107,17 +110,17 @@ fn buildShaders(b: *std.Build) !*std.Build.Step {
         "-profile",
         "spirv_1_3",
         "-o",
-        "src/shaders/compiled/shader.vert.spv",
+        "src/assets/shaders/compiled/shader.vert.spv",
         "-fvk-use-entrypoint-name",
         "-reflection-json",
-        "src/shaders/compiled/shader.vert.layout",
+        "src/assets/shaders/compiled/shader.vert.layout",
     });
     vert.step.dependOn(&mkdir.step);
     step.dependOn(&vert.step);
 
     const frag = b.addSystemCommand(&.{
         "slangc",
-        "src/shaders/shader.slang",
+        "src/assets/shaders/shader.slang",
         "-entry",
         "fragmentMain",
         "-stage",
@@ -125,10 +128,10 @@ fn buildShaders(b: *std.Build) !*std.Build.Step {
         "-profile",
         "spirv_1_3",
         "-o",
-        "src/shaders/compiled/shader.frag.spv",
+        "src/assets/shaders/compiled/shader.frag.spv",
         "-fvk-use-entrypoint-name",
         "-reflection-json",
-        "src/shaders/compiled/shader.frag.layout",
+        "src/assets/shaders/compiled/shader.frag.layout",
     });
     frag.step.dependOn(&mkdir.step);
     step.dependOn(&frag.step);

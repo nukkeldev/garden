@@ -1,10 +1,10 @@
 const std = @import("std");
 const log = @import("../log.zig");
 
-const EMBEDDED_VERTEX_SHADER = @embedFile("../shaders/compiled/shader.vert.spv");
-const EMBEDDED_VERTEX_SHADER_LAYOUT = @embedFile("../shaders/compiled/shader.vert.layout");
-const EMBEDDED_FRAGMENT_SHADER = @embedFile("../shaders/compiled/shader.frag.spv");
-const EMBEDDED_FRAGMENT_SHADER_LAYOUT = @embedFile("../shaders/compiled/shader.frag.layout");
+const EMBEDDED_VERTEX_SHADER = @embedFile("../assets/shaders/compiled/shader.vert.spv");
+const EMBEDDED_VERTEX_SHADER_LAYOUT = @embedFile("../assets/shaders/compiled/shader.vert.layout");
+const EMBEDDED_FRAGMENT_SHADER = @embedFile("../assets/shaders/compiled/shader.frag.spv");
+const EMBEDDED_FRAGMENT_SHADER_LAYOUT = @embedFile("../assets/shaders/compiled/shader.frag.layout");
 
 pub const CompiledShader = struct {
     allocator: ?std.mem.Allocator,

@@ -5,6 +5,7 @@ const ffi = @import("ffi.zig");
 const log = @import("log.zig");
 const ecs = @import("ecs");
 const components = @import("components.zig");
+const object = @import("object.zig");
 const zm = @import("zm");
 
 const gdn = log.gdn;
@@ -39,8 +40,7 @@ var device: *c.SDL_GPUDevice = undefined;
 var im_context: *c.ImGuiContext = undefined;
 
 var pipeline: ?*c.SDL_GPUGraphicsPipeline = null;
-var vertex_buffer: *c.SDL_GPUBuffer = undefined;
-var index_buffer: *c.SDL_GPUBuffer = undefined;
+var player: object.Object([6]f32, .U16) = undefined;
 
 var reg: ecs.Registry = undefined;
 
@@ -112,26 +112,28 @@ fn init() !void {
     // Create the rendering pipeline.
     try load_pipeline();
 
-    // Create vertex and index buffers.
-    vertex_buffer = gpu.initBuffer([6]f32, 8, .{
-        .{ -1, -1, -1, 0.247, 0.475, 0.757 }, // #3F79C1,
-        .{ 1, -1, -1, 0.851, 0.306, 0.451 }, // #D94E73
-        .{ 1, 1, -1, 0.482, 0.784, 0.290 }, // #7BC84A
-        .{ -1, 1, -1, 0.965, 0.773, 0.165 }, // #F6C52A
-        .{ -1, -1, 1, 0.541, 0.306, 0.812 }, // #8A4ECF
-        .{ 1, -1, 1, 0.180, 0.776, 0.721 }, // #2EC6B8
-        .{ 1, 1, 1, 0.929, 0.416, 0.184 }, // #ED6A2F
-        .{ -1, 1, 1, 0.282, 0.635, 0.878 }, // #489ADF
-    }, device);
-
-    index_buffer = gpu.initBuffer(u16, 36, .{
-        0, 2, 1, 2, 0, 3, // front
-        1, 6, 5, 6, 1, 2, // right
-        5, 7, 4, 7, 5, 6, // back
-        4, 3, 0, 3, 4, 7, // left
-        3, 6, 2, 6, 3, 7, // top
-        4, 1, 5, 1, 4, 0, // bottom
-    }, device);
+    // Create player object.
+    player = .initIndexed(
+        device,
+        &.{
+            .{ -1, -1, -1, 0.247, 0.475, 0.757 }, // #3F79C1,
+            .{ 1, -1, -1, 0.851, 0.306, 0.451 }, // #D94E73
+            .{ 1, 1, -1, 0.482, 0.784, 0.290 }, // #7BC84A
+            .{ -1, 1, -1, 0.965, 0.773, 0.165 }, // #F6C52A
+            .{ -1, -1, 1, 0.541, 0.306, 0.812 }, // #8A4ECF
+            .{ 1, -1, 1, 0.180, 0.776, 0.721 }, // #2EC6B8
+            .{ 1, 1, 1, 0.929, 0.416, 0.184 }, // #ED6A2F
+            .{ -1, 1, 1, 0.282, 0.635, 0.878 }, // #489ADF
+        },
+        &.{
+            0, 2, 1, 2, 0, 3, // front
+            1, 6, 5, 6, 1, 2, // right
+            5, 7, 4, 7, 5, 6, // back
+            4, 3, 0, 3, 4, 7, // left
+            3, 6, 2, 6, 3, 7, // top
+            4, 1, 5, 1, 4, 0, // bottom
+        },
+    );
 
     // Set the start time.
     last_update_ns = c.SDL_GetTicksNS();
@@ -248,22 +250,20 @@ fn render(ticks: u64, dt: u64) !void {
         .store_op = c.SDL_GPU_STOREOP_STORE,
     };
 
-    const rpass = c.SDL_BeginGPURenderPass(cmd, &color_target_info, 1, null) orelse sdl.fatal("SDL_BeginGPURenderPass");
+    const render_pass = c.SDL_BeginGPURenderPass(cmd, &color_target_info, 1, null) orelse sdl.fatal("SDL_BeginGPURenderPass");
 
     const model_matrix = zm.Mat4f.translationVec3(t_player.x).multiply(.rotation(.{ 0, 1, 0 }, t_player.r[1])).multiply(.scaling(0.5, 0.5, 0.5));
     const view_matrix = zm.Mat4f.lookAt(t_camera.x, .{ 0, 0, 0 }, .{ 0, 1, 0 });
     const model_view_proj = proj_matrix.multiply(view_matrix).multiply(model_matrix).transpose();
 
-    c.SDL_BindGPUGraphicsPipeline(rpass, pipeline.?);
+    c.SDL_BindGPUGraphicsPipeline(render_pass, pipeline.?);
 
     c.SDL_PushGPUVertexUniformData(cmd, 0, @ptrCast(&model_view_proj), @sizeOf(zm.Mat4f));
-    c.SDL_BindGPUVertexBuffers(rpass, 0, &[_]c.SDL_GPUBufferBinding{.{ .buffer = vertex_buffer, .offset = 0 }}, 1);
-    c.SDL_BindGPUIndexBuffer(rpass, &[_]c.SDL_GPUBufferBinding{.{ .buffer = index_buffer, .offset = 0 }}, c.SDL_GPU_INDEXELEMENTSIZE_16BIT);
-    c.SDL_DrawGPUIndexedPrimitives(rpass, 36, 1, 0, 0, 0);
+    player.draw(render_pass);
 
     // Submit the render pass.
-    c.cImGui_ImplSDLGPU3_RenderDrawData(draw_data, cmd, rpass);
-    c.SDL_EndGPURenderPass(rpass);
+    c.cImGui_ImplSDLGPU3_RenderDrawData(draw_data, cmd, render_pass);
+    c.SDL_EndGPURenderPass(render_pass);
 
     if (!c.SDL_SubmitGPUCommandBuffer(cmd)) sdl.fatal("SDL_SubmitGPUCommandBuffer");
 }
@@ -276,7 +276,7 @@ fn exit() !void {
     c.ImGui_DestroyContext(null);
 
     c.SDL_ReleaseGPUGraphicsPipeline(device, pipeline);
-    c.SDL_ReleaseGPUBuffer(device, vertex_buffer);
+    player.deinit();
 
     c.SDL_ReleaseWindowFromGPUDevice(device, window);
     c.SDL_DestroyGPUDevice(device);
@@ -291,8 +291,8 @@ fn exit() !void {
 fn load_pipeline() !void {
     if (pipeline != null) c.SDL_ReleaseGPUGraphicsPipeline(device, pipeline);
 
-    const compiled_vertex_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/shaders/shader.slang", .Vertex, pipeline == null, true)).?;
-    const compiled_fragment_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/shaders/shader.slang", .Fragment, pipeline == null, true)).?;
+    const compiled_vertex_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/assets/shaders/shader.slang", .Vertex, pipeline == null, true)).?;
+    const compiled_fragment_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/assets/shaders/shader.slang", .Fragment, pipeline == null, true)).?;
 
     const vertex_layout = gpu.slang.ShaderLayout.parseLeaky(shader_arena.allocator(), compiled_vertex_shader.layout).?;
     const fragment_layout = gpu.slang.ShaderLayout.parseLeaky(shader_arena.allocator(), compiled_fragment_shader.layout).?;

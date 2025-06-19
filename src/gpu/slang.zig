@@ -184,5 +184,5 @@ pub const ShaderLayout = struct {
 test {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    _ = ShaderLayout.parseLeaky(arena.allocator(), @embedFile("../shaders/compiled/shader.vert.layout")).?;
+    _ = ShaderLayout.parseLeaky(arena.allocator(), @embedFile("../assets/shaders/compiled/shader.vert.layout")).?;
 }

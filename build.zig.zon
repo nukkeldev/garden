@@ -22,6 +22,10 @@
             .url = "git+https://github.com/prime31/zig-ecs#fdad10c3274582842ed4c06b580a414c4c826f4c",
             .hash = "entt-1.0.0-qJPtbESoAgAGf--3nrQclyKL7WHK8JxZTGs8u2YNdOHm",
         },
+        .obj = .{
+            .url = "git+https://github.com/chip2n/zig-obj.git#4ad4f6463b553395a1cd5388846d8623f350bf8b",
+            .hash = "obj-3.0.0-v8OfipDLAAAfZnwVIVO_8cb6ZWpkxWK6-HTkkF-k6WuO",
+        },
     },
     .paths = .{
         "build.zig",
