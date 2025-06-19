@@ -98,7 +98,7 @@ fn buildShaders(b: *std.Build) !*std.Build.Step {
     step.result_cached = false;
 
     const mkdir = b.addSystemCommand(&.{ "mkdir", "-p" });
-    mkdir.addDirectoryArg(b.path("src/shaders/compiled"));
+    mkdir.addDirectoryArg(b.path("src/assets/shaders/compiled"));
 
     const vert = b.addSystemCommand(&.{
         "slangc",

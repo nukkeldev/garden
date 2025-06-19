@@ -6,3 +6,7 @@ zig-out/
 src/shaders/compiled/
 
 imgui.ini
+
+*.obj
+*.mtl
+*.blend1

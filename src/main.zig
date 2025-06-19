@@ -5,9 +5,9 @@ const ffi = @import("ffi.zig");
 const log = @import("log.zig");
 const ecs = @import("ecs");
 const components = @import("components.zig");
-const object = @import("object.zig");
 const zm = @import("zm");
 
+const Object = @import("object.zig").Object;
 const Window = @import("window.zig").Window;
 
 const gdn = log.gdn;
@@ -46,7 +46,7 @@ var im_context: *c.ImGuiContext = undefined;
 var pipeline: ?*c.SDL_GPUGraphicsPipeline = null;
 var depth_texture: *c.SDL_GPUTexture = undefined;
 
-var player: object.Object([6]f32, .U32) = undefined;
+var player: []Object = undefined;
 var reg: ecs.Registry = undefined;
 
 var e_player: ecs.Entity = undefined;
@@ -123,7 +123,7 @@ fn init() !void {
     try load_pipeline(false);
 
     // Create player object.
-    player = (try @TypeOf(player).initFromOBJLeaky(model_arena.allocator(), window.device, @embedFile("assets/models/Player.obj"), @embedFile("assets/models/Player.mtl")))[0];
+    player = try Object.initFromOBJLeaky(model_arena.allocator(), window.device, @embedFile("assets/models/Player.obj"), @embedFile("assets/models/Player.mtl"));
 
     // Set the start time.
     last_update_ns = c.SDL_GetTicksNS();
@@ -258,7 +258,7 @@ fn render(ticks: u64, dt: u64) !void {
     c.SDL_BindGPUGraphicsPipeline(render_pass, pipeline.?);
 
     c.SDL_PushGPUVertexUniformData(cmd, 0, @ptrCast(&model_view_proj), @sizeOf(zm.Mat4f));
-    player.draw(render_pass);
+    for (player) |obj| obj.draw(render_pass);
 
     // ImGui Rendering
 
@@ -300,7 +300,7 @@ fn exit() !void {
     c.SDL_ReleaseGPUTexture(window.device, depth_texture);
     c.SDL_ReleaseGPUGraphicsPipeline(window.device, pipeline);
 
-    player.deinit();
+    for (player) |obj| obj.deinit();
     window.deinit();
 
     shader_arena.deinit();

@@ -81,7 +81,7 @@ pub const Window = struct {
         // Create the window handle.
         {
             const name = try cstr(allocator, options.name);
-            defer allocator.free(name);
+            defer allocator.free(name[0..name.len]);
 
             self.window = c.SDL_CreateWindow(
                 name,
