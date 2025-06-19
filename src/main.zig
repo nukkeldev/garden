@@ -20,7 +20,7 @@ pub const std_options: std.Options = .{ .log_level = .debug };
 // Configuration
 
 const INITIAL_WINDOW_SIZE = .{ .width = 1024, .height = 1024 };
-const WINDOW_FLAGS = c.SDL_WINDOW_RESIZABLE | c.SDL_WINDOW_HIDDEN | c.SDL_WINDOW_HIGH_PIXEL_DENSITY | c.SDL_WINDOW_VULKAN;
+const WINDOW_FLAGS = c.SDL_WINDOW_HIDDEN | c.SDL_WINDOW_HIGH_PIXEL_DENSITY | c.SDL_WINDOW_VULKAN;
 
 const TARGET_FRAMERATE: f32 = 60.0;
 const TARGET_FRAMETIME_NS: u64 = @intFromFloat(1e9 / 60.0);
@@ -58,9 +58,12 @@ var proj_matrix: zm.Mat4f = zm.Mat4f.perspective(std.math.degreesToRadians(60.0)
 
 var last_update_ns: u64 = 0;
 var should_exit = false;
-var show_imgui_demo_window = true;
+
+var wireframe = false;
 
 var keyboard_state: [*c]const bool = undefined;
+
+var depth_texture: *c.SDL_GPUTexture = undefined;
 
 // Functions
 
@@ -90,6 +93,17 @@ fn init() !void {
     if (!c.SDL_SetGPUSwapchainParameters(device, window, c.SDL_GPU_SWAPCHAINCOMPOSITION_SDR, c.SDL_GPU_PRESENTMODE_MAILBOX)) sdl.fatal("SDL_SetGPUSwapchainParameters");
     if (!c.SDL_SetGPUAllowedFramesInFlight(device, FRAMES_IN_FLIGHT)) sdl.fatal("SDL_SetGPUAllowedFramesInFlight");
 
+    depth_texture = c.SDL_CreateGPUTexture(device, &.{
+        .type = c.SDL_GPU_TEXTURETYPE_2D,
+        .width = @intFromFloat(@as(f32, @floatFromInt(INITIAL_WINDOW_SIZE.width)) * display_scale),
+        .height = @intFromFloat(@as(f32, @floatFromInt(INITIAL_WINDOW_SIZE.height)) * display_scale),
+        .layer_count_or_depth = 1,
+        .num_levels = 1,
+        .sample_count = c.SDL_GPU_SAMPLECOUNT_1,
+        .format = c.SDL_GPU_TEXTUREFORMAT_D16_UNORM,
+        .usage = c.SDL_GPU_TEXTUREUSAGE_SAMPLER | c.SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET,
+    }) orelse sdl.fatal("SDL_CreateGPUTexture");
+
     // Create an ImGui context.
     im_context = c.ImGui_CreateContext(null) orelse gui.fatal("igCreateContext");
 
@@ -111,7 +125,7 @@ fn init() !void {
     if (!c.cImGui_ImplSDLGPU3_Init(&imgui_init)) gui.fatal("cImGui_ImplSDLGPU3_Init");
 
     // Create the rendering pipeline.
-    try load_pipeline();
+    try load_pipeline(false);
 
     // Create player object.
     player = (try @TypeOf(player).initFromOBJLeaky(model_arena.allocator(), device, @embedFile("assets/models/Player.obj"), @embedFile("assets/models/Player.mtl")))[0];
@@ -164,7 +178,20 @@ fn pollEvents() !void {
                     // General
                     c.SDL_SCANCODE_ESCAPE => should_exit = true,
                     // Debug
-                    c.SDL_SCANCODE_R => if (!event.key.repeat and event.key.mod & c.SDL_KMOD_LCTRL != 0) try load_pipeline(),
+                    c.SDL_SCANCODE_R => if (!event.key.repeat and event.key.mod & c.SDL_KMOD_LCTRL != 0) try load_pipeline(true),
+                    c.SDL_SCANCODE_F => if (!event.key.repeat) {
+                        wireframe = true;
+                        try load_pipeline(false);
+                    },
+                    else => {},
+                }
+            },
+            c.SDL_EVENT_KEY_UP => {
+                switch (event.key.scancode) {
+                    c.SDL_SCANCODE_F => {
+                        wireframe = false;
+                        try load_pipeline(false);
+                    },
                     else => {},
                 }
             },
@@ -231,7 +258,18 @@ fn render(ticks: u64, dt: u64) !void {
         .store_op = c.SDL_GPU_STOREOP_STORE,
     };
 
-    const render_pass = c.SDL_BeginGPURenderPass(cmd, &color_target_info, 1, null) orelse sdl.fatal("SDL_BeginGPURenderPass");
+    const depth_stencil_target_info = c.SDL_GPUDepthStencilTargetInfo{
+        .texture = depth_texture,
+        .cycle = true,
+        .clear_depth = 1,
+        .clear_stencil = 0,
+        .load_op = c.SDL_GPU_LOADOP_CLEAR,
+        .store_op = c.SDL_GPU_STOREOP_STORE,
+        .stencil_load_op = c.SDL_GPU_LOADOP_CLEAR,
+        .stencil_store_op = c.SDL_GPU_STOREOP_STORE,
+    };
+
+    const render_pass = c.SDL_BeginGPURenderPass(cmd, &color_target_info, 1, &depth_stencil_target_info) orelse sdl.fatal("SDL_BeginGPURenderPass");
 
     const model_matrix = zm.Mat4f.translationVec3(t_player.x).multiply(.rotation(.{ 0, 1, 0 }, t_player.r[1])).multiply(.scaling(0.5, 0.5, 0.5));
     const view_matrix = zm.Mat4f.lookAt(t_camera.x, .{ 0, 0, 0 }, .{ 0, 1, 0 });
@@ -270,18 +308,47 @@ fn exit() !void {
     model_arena.deinit();
 }
 
-fn load_pipeline() !void {
+fn load_pipeline(recompile: bool) !void {
     if (pipeline != null) c.SDL_ReleaseGPUGraphicsPipeline(device, pipeline);
 
-    const compiled_vertex_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/assets/shaders/shader.slang", .Vertex, pipeline == null, true)).?;
-    const compiled_fragment_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/assets/shaders/shader.slang", .Fragment, pipeline == null, true)).?;
+    var compiled_vertex_shader: gpu.compile.CompiledShader = undefined;
+    var compiled_fragment_shader: gpu.compile.CompiledShader = undefined;
+
+    if (recompile) {
+        compiled_vertex_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/assets/shaders/shader.slang", .Vertex, pipeline == null, true)).?;
+        compiled_fragment_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/assets/shaders/shader.slang", .Fragment, pipeline == null, true)).?;
+    } else {
+        compiled_vertex_shader = .{
+            .allocator = shader_arena.allocator(),
+            .spv = std.fs.cwd().readFileAlloc(shader_arena.allocator(), "src/assets/shaders/compiled/shader.vert.spv", std.math.maxInt(usize)) catch {
+                log.gdn.err("Failed to read vertex shader!", .{});
+                return;
+            },
+            .layout = std.fs.cwd().readFileAlloc(shader_arena.allocator(), "src/assets/shaders/compiled/shader.vert.layout", std.math.maxInt(usize)) catch {
+                log.gdn.err("Failed to read vertex shader layout!", .{});
+                return;
+            },
+        };
+
+        compiled_fragment_shader = .{
+            .allocator = shader_arena.allocator(),
+            .spv = std.fs.cwd().readFileAlloc(shader_arena.allocator(), "src/assets/shaders/compiled/shader.frag.spv", std.math.maxInt(usize)) catch {
+                log.gdn.err("Failed to read fragment shader!", .{});
+                return;
+            },
+            .layout = std.fs.cwd().readFileAlloc(shader_arena.allocator(), "src/assets/shaders/compiled/shader.frag.layout", std.math.maxInt(usize)) catch {
+                log.gdn.err("Failed to read fragment shader layout!", .{});
+                return;
+            },
+        };
+    }
 
     const vertex_layout = gpu.slang.ShaderLayout.parseLeaky(shader_arena.allocator(), compiled_vertex_shader.layout).?;
     const fragment_layout = gpu.slang.ShaderLayout.parseLeaky(shader_arena.allocator(), compiled_fragment_shader.layout).?;
 
-    pipeline = gpu.slang.ShaderLayout.createPipeline(device, window, &vertex_layout, &fragment_layout, compiled_vertex_shader.spv, compiled_fragment_shader.spv).?;
+    pipeline = gpu.slang.ShaderLayout.createPipeline(device, window, &vertex_layout, &fragment_layout, compiled_vertex_shader.spv, compiled_fragment_shader.spv, wireframe).?;
 
-    gdn.info("Compiled and reloaded shaders!", .{});
+    if (recompile) gdn.info("Compiled and reloaded shaders!", .{});
 }
 
 // Main

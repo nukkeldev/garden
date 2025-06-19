@@ -1,4 +1,5 @@
 const std = @import("std");
+const zm = @import("zm");
 const obj = @import("obj");
 
 const c = @import("ffi.zig").c;
@@ -49,24 +50,29 @@ pub fn Object(comptime VertexType: type, comptime IndexType: enum { U16, U32 }) 
             var material_data = if (material_bytes) |d| try obj.parseMtl(allocator, d) else null;
             defer if (material_data != null) material_data.?.deinit(allocator);
 
-            const vertices = try allocator.alloc(VertexType, model.vertices.len * 2);
+            const model_verticies = try allocator.alloc(VertexType, model.vertices.len * 2);
             for (0..model.vertices.len / 3) |i| {
-                vertices[i] = .{ model.vertices[i * 3], model.vertices[i * 3 + 1], model.vertices[i * 3 + 2], 1.0, 1.0, 1.0 };
+                model_verticies[i] = .{ model.vertices[i * 3], model.vertices[i * 3 + 1], model.vertices[i * 3 + 2], 1.0, 1.0, 1.0 };
             }
 
             for (model.meshes, 0..) |mesh, i| {
+                const vertices = try allocator.dupe(VertexType, model_verticies);
                 const indices = try allocator.alloc(ResolvedIndexType, mesh.indices.len);
                 for (mesh.indices, 0..) |index, j| {
                     const k: usize = @intCast(index.vertex.?);
+                    var color: zm.Vec3f = .{ 1, 1, 1 };
+
                     if (material_data) |m| {
                         for (mesh.materials) |mat| if (j >= mat.start_index and j <= mat.end_index) {
                             const material = m.materials.get(mat.material).?;
-                            const color = material.diffuse_color orelse .{ 1.0, 1.0, 1.0 };
-                            vertices[k][3] = color[0];
-                            vertices[k][4] = color[1];
-                            vertices[k][5] = color[2];
+                            color = material.diffuse_color orelse .{ 1.0, 1.0, 1.0 };
                         };
                     }
+
+                    vertices[k][3] = color[0];
+                    vertices[k][4] = color[1];
+                    vertices[k][5] = color[2];
+
                     indices[j] = @intCast(k);
                 }
                 objects[i] = initIndexed(device, vertices, indices);
@@ -87,7 +93,11 @@ pub fn Object(comptime VertexType: type, comptime IndexType: enum { U16, U32 }) 
                     .U16 => c.SDL_GPU_INDEXELEMENTSIZE_16BIT,
                     .U32 => c.SDL_GPU_INDEXELEMENTSIZE_32BIT,
                 });
-                c.SDL_DrawGPUIndexedPrimitives(render_pass, @intCast(self.index_data.?.len), 1, 0, 0, 0);
+                // c.SDL_DrawGPUIndexedPrimitives(render_pass, @intCast(self.index_data.?.len), 1, 0, 0, 0);
+
+                for (0..self.index_data.?.len / 3) |i| {
+                    c.SDL_DrawGPUIndexedPrimitives(render_pass, @intCast((i + 1) * 3), 1, 0, 0, 0);
+                }
             } else {
                 c.SDL_DrawGPUPrimitives(render_pass, @intCast(self.vertex_data.len), 1, 0, 0);
             }

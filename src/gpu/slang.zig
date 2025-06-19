@@ -151,6 +151,7 @@ pub const ShaderLayout = struct {
         fragment_layout: *const Self,
         vertex_code: []const u8,
         fragment_code: []const u8,
+        wireframe: bool,
     ) ?*c.SDL_GPUGraphicsPipeline {
         const vertex_shader = vertex_layout.createShader(device, vertex_code) orelse return null;
         const fragment_shader = fragment_layout.createShader(device, fragment_code) orelse return null;
@@ -166,8 +167,18 @@ pub const ShaderLayout = struct {
                         .format = c.SDL_GetGPUSwapchainTextureFormat(device, window),
                     },
                 },
+                .has_depth_stencil_target = true,
+                .depth_stencil_format = c.SDL_GPU_TEXTUREFORMAT_D16_UNORM,
+            },
+            .depth_stencil_state = .{
+                .enable_depth_test = true,
+                .enable_depth_write = true,
+                .enable_stencil_test = false,
+                .compare_op = c.SDL_GPU_COMPAREOP_LESS,
+                .write_mask = 0xFF,
             },
             .rasterizer_state = .{
+                .fill_mode = if (wireframe) c.SDL_GPU_FILLMODE_LINE else c.SDL_GPU_FILLMODE_FILL,
                 .cull_mode = c.SDL_GPU_CULLMODE_BACK,
                 .front_face = c.SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE,
             },
