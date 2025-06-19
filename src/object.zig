@@ -27,7 +27,7 @@ pub fn Object(comptime VertexType: type, comptime IndexType: enum { U16, U32 }) 
             return .{
                 .device = device,
                 .vertex_data = vertex_data,
-                .vertex_buffer = gpu.initBuffer(VertexType, @intCast(vertex_data.len), vertex_data, device),
+                .vertex_buffer = gpu.initBuffer(VertexType, @intCast(vertex_data.len), vertex_data, device, c.SDL_GPU_BUFFERUSAGE_VERTEX),
             };
         }
 
@@ -36,8 +36,8 @@ pub fn Object(comptime VertexType: type, comptime IndexType: enum { U16, U32 }) 
                 .device = device,
                 .vertex_data = vertex_data,
                 .index_data = index_data,
-                .vertex_buffer = gpu.initBuffer(VertexType, @intCast(vertex_data.len), vertex_data, device),
-                .index_buffer = gpu.initBuffer(ResolvedIndexType, @intCast(index_data.len), index_data, device),
+                .vertex_buffer = gpu.initBuffer(VertexType, @intCast(vertex_data.len), vertex_data, device, c.SDL_GPU_BUFFERUSAGE_VERTEX),
+                .index_buffer = gpu.initBuffer(ResolvedIndexType, @intCast(index_data.len), index_data, device, c.SDL_GPU_BUFFERUSAGE_INDEX),
             };
         }
 

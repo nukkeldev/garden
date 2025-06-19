@@ -1,3 +1,4 @@
+const std = @import("std");
 const c = @import("ffi.zig").c;
 
 pub const slang = @import("gpu/slang.zig");
@@ -5,13 +6,13 @@ pub const compile = @import("gpu/compile.zig");
 
 const sdl = @import("log.zig").sdl;
 
-pub fn initBuffer(comptime T: type, len: u32, data: []const T, device: *c.SDL_GPUDevice) *c.SDL_GPUBuffer {
+pub fn initBuffer(comptime T: type, len: u32, data: []const T, device: *c.SDL_GPUDevice, buffer_usage: c.SDL_GPUBufferUsageFlags) *c.SDL_GPUBuffer {
     const data_size = @sizeOf(T) * len;
 
     const buffer = c.SDL_CreateGPUBuffer(device, &.{
-        .usage = c.SDL_GPU_BUFFERUSAGE_VERTEX,
+        .usage = buffer_usage,
         .size = data_size,
-    }) orelse sdl.fatal("SDL_CreateGPUBuffer(SDL_GPU_BUFFERUSAGE_VERTEX)");
+    }) orelse sdl.fatal("SDL_CreateGPUBuffer");
 
     const transfer_buffer = c.SDL_CreateGPUTransferBuffer(device, &.{
         .usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
@@ -25,8 +26,8 @@ pub fn initBuffer(comptime T: type, len: u32, data: []const T, device: *c.SDL_GP
 
     c.SDL_UnmapGPUTransferBuffer(device, transfer_buffer);
 
-    const upload_cmd_buf = c.SDL_AcquireGPUCommandBuffer(device) orelse sdl.fatal("SDL_AcquireGPUCommandBuffer");
-    const copy_pass = c.SDL_BeginGPUCopyPass(upload_cmd_buf) orelse sdl.fatal("SDL_BeginGPUCopyPass");
+    const cmd = c.SDL_AcquireGPUCommandBuffer(device) orelse sdl.fatal("SDL_AcquireGPUCommandBuffer");
+    const copy_pass = c.SDL_BeginGPUCopyPass(cmd) orelse sdl.fatal("SDL_BeginGPUCopyPass");
 
     c.SDL_UploadToGPUBuffer(copy_pass, &.{
         .transfer_buffer = transfer_buffer,
@@ -38,7 +39,7 @@ pub fn initBuffer(comptime T: type, len: u32, data: []const T, device: *c.SDL_GP
     }, false);
 
     c.SDL_EndGPUCopyPass(copy_pass);
-    if (!c.SDL_SubmitGPUCommandBuffer(upload_cmd_buf)) sdl.fatal("SDL_SubmitGPUCommandBuffer");
+    if (!c.SDL_SubmitGPUCommandBuffer(cmd)) sdl.fatal("SDL_SubmitGPUCommandBuffer");
     c.SDL_ReleaseGPUTransferBuffer(device, transfer_buffer);
 
     return buffer;

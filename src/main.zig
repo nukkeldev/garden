@@ -59,11 +59,14 @@ var proj_matrix: zm.Mat4f = zm.Mat4f.perspective(std.math.degreesToRadians(60.0)
 var last_update_ns: u64 = 0;
 var should_exit = false;
 
+var debug = true;
 var wireframe = false;
 
 var keyboard_state: [*c]const bool = undefined;
 
 var depth_texture: *c.SDL_GPUTexture = undefined;
+
+var window_size: [2]u32 = undefined;
 
 // Functions
 
@@ -75,10 +78,15 @@ fn init() !void {
 
     // Create the window.
     const display_scale = c.SDL_GetDisplayContentScale(c.SDL_GetPrimaryDisplay());
-    window = c.SDL_CreateWindow(
-        "Garden",
+    window_size = [_]u32{
         @intFromFloat(display_scale * @as(f32, @floatFromInt(INITIAL_WINDOW_SIZE.width))),
         @intFromFloat(display_scale * @as(f32, @floatFromInt(INITIAL_WINDOW_SIZE.height))),
+    };
+
+    window = c.SDL_CreateWindow(
+        "Garden",
+        @intCast(window_size[0]),
+        @intCast(window_size[1]),
         WINDOW_FLAGS,
     ) orelse sdl.fatal("SDL_CreateWindow");
     if (!c.SDL_SetWindowPosition(window, c.SDL_WINDOWPOS_CENTERED, c.SDL_WINDOWPOS_CENTERED)) sdl.err("SDL_SetWindowPosition");
@@ -95,8 +103,8 @@ fn init() !void {
 
     depth_texture = c.SDL_CreateGPUTexture(device, &.{
         .type = c.SDL_GPU_TEXTURETYPE_2D,
-        .width = @intFromFloat(@as(f32, @floatFromInt(INITIAL_WINDOW_SIZE.width)) * display_scale),
-        .height = @intFromFloat(@as(f32, @floatFromInt(INITIAL_WINDOW_SIZE.height)) * display_scale),
+        .width = window_size[0],
+        .height = window_size[1],
         .layer_count_or_depth = 1,
         .num_levels = 1,
         .sample_count = c.SDL_GPU_SAMPLECOUNT_1,
@@ -183,6 +191,9 @@ fn pollEvents() !void {
                         wireframe = true;
                         try load_pipeline(false);
                     },
+                    c.SDL_SCANCODE_GRAVE => if (!event.key.repeat) {
+                        debug = !debug;
+                    },
                     else => {},
                 }
             },
@@ -223,7 +234,7 @@ fn updateSystems(dt: u64) !void {
 
 fn render(ticks: u64, dt: u64) !void {
     _ = ticks;
-    const frame_time = @as(f32, @floatFromInt(dt)) / 1e6;
+    const frame_time_ms = @as(f32, @floatFromInt(dt)) / 1e6;
 
     const cmd = c.SDL_AcquireGPUCommandBuffer(device) orelse sdl.fatal("SDL_AcquireGPUCommandBuffer");
 
@@ -234,20 +245,6 @@ fn render(ticks: u64, dt: u64) !void {
     if (swapchain_texture == null) return;
 
     const tex = swapchain_texture.?;
-
-    // ImGui Rendering
-
-    c.cImGui_ImplSDLGPU3_NewFrame();
-    c.cImGui_ImplSDL3_NewFrame();
-    c.ImGui_NewFrame();
-
-    _ = c.ImGui_Begin("-", null, 0);
-    c.ImGui_Text("FPS: %.2f | Frame Time: %.2f ms\nPlayer Position: (%.2f, %.2f, %.2f)", 1000.0 / frame_time, frame_time, t_player.x[0], t_player.x[1], t_player.x[2]);
-    c.ImGui_End();
-
-    c.ImGui_Render();
-    const draw_data: *c.ImDrawData = c.ImGui_GetDrawData();
-    c.cImgui_ImplSDLGPU3_PrepareDrawData(draw_data, cmd);
 
     // SDL Rendering
 
@@ -280,8 +277,31 @@ fn render(ticks: u64, dt: u64) !void {
     c.SDL_PushGPUVertexUniformData(cmd, 0, @ptrCast(&model_view_proj), @sizeOf(zm.Mat4f));
     player.draw(render_pass);
 
+    // ImGui Rendering
+
+    if (debug) {
+        // Begin a new ImGui frame.
+        c.cImGui_ImplSDLGPU3_NewFrame();
+        c.cImGui_ImplSDL3_NewFrame();
+        c.ImGui_NewFrame();
+
+        // Show the ImGui metrics window.
+        c.ImGui_ShowMetricsWindow(null);
+
+        // Show a performance metrics window.
+        _ = c.ImGui_Begin("Performance", null, c.ImGuiWindowFlags_NoResize | c.ImGuiWindowFlags_NoDecoration | c.ImGuiWindowFlags_AlwaysAutoResize | c.ImGuiWindowFlags_NoMove);
+        c.ImGui_SetWindowPos(.{ .x = 5.0, .y = 5.0 }, c.ImGuiCond_None);
+        c.ImGui_Text("FPS: %-6.2f\nFrame Time (ms): %-6.3f", 1e3 / frame_time_ms, frame_time_ms);
+        c.ImGui_End();
+
+        // Render ImGui, prepare the draw data and submit the draw calls.
+        c.ImGui_Render();
+        const draw_data: *c.ImDrawData = c.ImGui_GetDrawData();
+        c.cImgui_ImplSDLGPU3_PrepareDrawData(draw_data, cmd);
+        c.cImGui_ImplSDLGPU3_RenderDrawData(draw_data, cmd, render_pass);
+    }
+
     // Submit the render pass.
-    c.cImGui_ImplSDLGPU3_RenderDrawData(draw_data, cmd, render_pass);
     c.SDL_EndGPURenderPass(render_pass);
 
     if (!c.SDL_SubmitGPUCommandBuffer(cmd)) sdl.fatal("SDL_SubmitGPUCommandBuffer");
@@ -293,6 +313,8 @@ fn exit() !void {
     c.cImGui_ImplSDLGPU3_Shutdown();
     c.cImGui_ImplSDL3_Shutdown();
     c.ImGui_DestroyContext(null);
+
+    c.SDL_ReleaseGPUTexture(device, depth_texture);
 
     c.SDL_ReleaseGPUGraphicsPipeline(device, pipeline);
     player.deinit();
