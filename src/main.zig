@@ -34,13 +34,14 @@ const ROTATION_SPEED: f32 = 4.0;
 
 var shader_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 var ecs_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+var model_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
 var window: *c.SDL_Window = undefined;
 var device: *c.SDL_GPUDevice = undefined;
 var im_context: *c.ImGuiContext = undefined;
 
 var pipeline: ?*c.SDL_GPUGraphicsPipeline = null;
-var player: object.Object([6]f32, .U16) = undefined;
+var player: object.Object([6]f32, .U32) = undefined;
 
 var reg: ecs.Registry = undefined;
 
@@ -113,27 +114,7 @@ fn init() !void {
     try load_pipeline();
 
     // Create player object.
-    player = .initIndexed(
-        device,
-        &.{
-            .{ -1, -1, -1, 0.247, 0.475, 0.757 }, // #3F79C1,
-            .{ 1, -1, -1, 0.851, 0.306, 0.451 }, // #D94E73
-            .{ 1, 1, -1, 0.482, 0.784, 0.290 }, // #7BC84A
-            .{ -1, 1, -1, 0.965, 0.773, 0.165 }, // #F6C52A
-            .{ -1, -1, 1, 0.541, 0.306, 0.812 }, // #8A4ECF
-            .{ 1, -1, 1, 0.180, 0.776, 0.721 }, // #2EC6B8
-            .{ 1, 1, 1, 0.929, 0.416, 0.184 }, // #ED6A2F
-            .{ -1, 1, 1, 0.282, 0.635, 0.878 }, // #489ADF
-        },
-        &.{
-            0, 2, 1, 2, 0, 3, // front
-            1, 6, 5, 6, 1, 2, // right
-            5, 7, 4, 7, 5, 6, // back
-            4, 3, 0, 3, 4, 7, // left
-            3, 6, 2, 6, 3, 7, // top
-            4, 1, 5, 1, 4, 0, // bottom
-        },
-    );
+    player = (try @TypeOf(player).initFromOBJLeaky(model_arena.allocator(), device, @embedFile("assets/models/Player.obj"), @embedFile("assets/models/Player.mtl")))[0];
 
     // Set the start time.
     last_update_ns = c.SDL_GetTicksNS();
@@ -286,6 +267,7 @@ fn exit() !void {
 
     shader_arena.deinit();
     ecs_arena.deinit();
+    model_arena.deinit();
 }
 
 fn load_pipeline() !void {

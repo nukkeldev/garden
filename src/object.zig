@@ -20,9 +20,6 @@ pub fn Object(comptime VertexType: type, comptime IndexType: enum { U16, U32 }) 
         vertex_buffer: *c.SDL_GPUBuffer,
         index_buffer: ?*c.SDL_GPUBuffer = null,
 
-        model: ?obj.Mesh = null,
-        material: ?obj.Material = null,
-
         const Self = @This();
 
         pub fn init(device: *c.SDL_GPUDevice, vertex_data: []const VertexType) Self {
@@ -43,24 +40,42 @@ pub fn Object(comptime VertexType: type, comptime IndexType: enum { U16, U32 }) 
             };
         }
 
-        pub fn initFromOBJ(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, model_data: []const u8, material_data: ?[]const u8) !Self {
-            const model = try obj.parseObj(allocator, model_data);
+        /// Creates one Object per mesh in the .obj.
+        pub fn initFromOBJLeaky(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, model_data: []const u8, material_bytes: ?[]const u8) ![]Self {
+            var model = try obj.parseObj(allocator, model_data);
+            defer model.deinit(allocator);
+            const objects = try allocator.alloc(Self, model.meshes.len);
 
-            var self = init(device, model.vertices, model.vertices.len);
-            self.allocator = allocator;
-            self.model = model;
-            if (material_data) |d| {
-                const material = try obj.parseMtl(allocator, d);
-                self.material = material;
+            var material_data = if (material_bytes) |d| try obj.parseMtl(allocator, d) else null;
+            defer if (material_data != null) material_data.?.deinit(allocator);
+
+            const vertices = try allocator.alloc(VertexType, model.vertices.len * 2);
+            for (0..model.vertices.len / 3) |i| {
+                vertices[i] = .{ model.vertices[i * 3], model.vertices[i * 3 + 1], model.vertices[i * 3 + 2], 1.0, 1.0, 1.0 };
             }
 
-            return self;
+            for (model.meshes, 0..) |mesh, i| {
+                const indices = try allocator.alloc(ResolvedIndexType, mesh.indices.len);
+                for (mesh.indices, 0..) |index, j| {
+                    const k: usize = @intCast(index.vertex.?);
+                    if (material_data) |m| {
+                        for (mesh.materials) |mat| if (j >= mat.start_index and j <= mat.end_index) {
+                            const material = m.materials.get(mat.material).?;
+                            const color = material.diffuse_color orelse .{ 1.0, 1.0, 1.0 };
+                            vertices[k][3] = color[0];
+                            vertices[k][4] = color[1];
+                            vertices[k][5] = color[2];
+                        };
+                    }
+                    indices[j] = @intCast(k);
+                }
+                objects[i] = initIndexed(device, vertices, indices);
+            }
+
+            return objects;
         }
 
         pub fn deinit(self: *Self) void {
-            if (self.model) |m| m.deinit(self.allocator.?);
-            if (self.material != null) self.material.?.deinit(self.allocator.?);
-
             c.SDL_ReleaseGPUBuffer(self.device, self.vertex_buffer);
             if (self.index_buffer) |ib| c.SDL_ReleaseGPUBuffer(self.device, ib);
         }
