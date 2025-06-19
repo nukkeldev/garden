@@ -93,11 +93,11 @@ pub fn Object(comptime VertexType: type, comptime IndexType: enum { U16, U32 }) 
                     .U16 => c.SDL_GPU_INDEXELEMENTSIZE_16BIT,
                     .U32 => c.SDL_GPU_INDEXELEMENTSIZE_32BIT,
                 });
-                // c.SDL_DrawGPUIndexedPrimitives(render_pass, @intCast(self.index_data.?.len), 1, 0, 0, 0);
+                c.SDL_DrawGPUIndexedPrimitives(render_pass, @intCast(self.index_data.?.len), 1, 0, 0, 0);
 
-                for (0..self.index_data.?.len / 3) |i| {
-                    c.SDL_DrawGPUIndexedPrimitives(render_pass, @intCast((i + 1) * 3), 1, 0, 0, 0);
-                }
+                // for (0..self.index_data.?.len / 3) |i| {
+                //     c.SDL_DrawGPUIndexedPrimitives(render_pass, @intCast((i + 1) * 3), 1, 0, 0, 0);
+                // }
             } else {
                 c.SDL_DrawGPUPrimitives(render_pass, @intCast(self.vertex_data.len), 1, 0, 0);
             }

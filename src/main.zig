@@ -8,6 +8,8 @@ const components = @import("components.zig");
 const object = @import("object.zig");
 const zm = @import("zm");
 
+const Window = @import("window.zig").Window;
+
 const gdn = log.gdn;
 const sdl = log.sdl;
 const gui = log.gui;
@@ -36,13 +38,15 @@ var shader_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 var ecs_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 var model_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
-var window: *c.SDL_Window = undefined;
-var device: *c.SDL_GPUDevice = undefined;
+var debug_allocator = std.heap.DebugAllocator(.{}).init;
+
+var window: Window = undefined;
 var im_context: *c.ImGuiContext = undefined;
 
 var pipeline: ?*c.SDL_GPUGraphicsPipeline = null;
-var player: object.Object([6]f32, .U32) = undefined;
+var depth_texture: *c.SDL_GPUTexture = undefined;
 
+var player: object.Object([6]f32, .U32) = undefined;
 var reg: ecs.Registry = undefined;
 
 var e_player: ecs.Entity = undefined;
@@ -64,10 +68,6 @@ var wireframe = false;
 
 var keyboard_state: [*c]const bool = undefined;
 
-var depth_texture: *c.SDL_GPUTexture = undefined;
-
-var window_size: [2]u32 = undefined;
-
 // Functions
 
 fn init() !void {
@@ -77,34 +77,21 @@ fn init() !void {
     if (!c.SDL_Init(c.SDL_INIT_VIDEO)) sdl.fatal("SDL_Init(c.SDL_INIT_VIDEO)");
 
     // Create the window.
-    const display_scale = c.SDL_GetDisplayContentScale(c.SDL_GetPrimaryDisplay());
-    window_size = [_]u32{
-        @intFromFloat(display_scale * @as(f32, @floatFromInt(INITIAL_WINDOW_SIZE.width))),
-        @intFromFloat(display_scale * @as(f32, @floatFromInt(INITIAL_WINDOW_SIZE.height))),
-    };
+    window = Window.init(
+        debug_allocator.allocator(),
+        .{
+            .name = "Garden Demo",
+            .initial_size = .{ 1024, 1024 },
+        },
+        .{
+            .close_window = &should_exit,
+        },
+    ) catch |e| gdn.fatal("Failed to create window: {}!", .{e});
 
-    window = c.SDL_CreateWindow(
-        "Garden",
-        @intCast(window_size[0]),
-        @intCast(window_size[1]),
-        WINDOW_FLAGS,
-    ) orelse sdl.fatal("SDL_CreateWindow");
-    if (!c.SDL_SetWindowPosition(window, c.SDL_WINDOWPOS_CENTERED, c.SDL_WINDOWPOS_CENTERED)) sdl.err("SDL_SetWindowPosition");
-    if (!c.SDL_ShowWindow(window)) sdl.err("SDL_ShowWindow");
-
-    // Create the GPU device and claim the window for it.
-    // TODO: If `debug_mode` is enabled, `c.cImGui_ImplSDLGPU3_RenderDrawData` below crashes
-    // with an a load of some random value not being "valid for type 'bool'". I am not sure
-    // how to fix this currently but it appears to be some sort of use-after-free?
-    device = c.SDL_CreateGPUDevice(c.SDL_GPU_SHADERFORMAT_SPIRV, false, null) orelse sdl.fatal("SDL_CreateGPUDevice");
-    if (!c.SDL_ClaimWindowForGPUDevice(device, window)) sdl.fatal("SDL_ClaimWindowForGPUDevice");
-    if (!c.SDL_SetGPUSwapchainParameters(device, window, c.SDL_GPU_SWAPCHAINCOMPOSITION_SDR, c.SDL_GPU_PRESENTMODE_MAILBOX)) sdl.fatal("SDL_SetGPUSwapchainParameters");
-    if (!c.SDL_SetGPUAllowedFramesInFlight(device, FRAMES_IN_FLIGHT)) sdl.fatal("SDL_SetGPUAllowedFramesInFlight");
-
-    depth_texture = c.SDL_CreateGPUTexture(device, &.{
+    depth_texture = c.SDL_CreateGPUTexture(window.device, &.{
         .type = c.SDL_GPU_TEXTURETYPE_2D,
-        .width = window_size[0],
-        .height = window_size[1],
+        .width = window.size[0],
+        .height = window.size[1],
         .layer_count_or_depth = 1,
         .num_levels = 1,
         .sample_count = c.SDL_GPU_SAMPLECOUNT_1,
@@ -121,13 +108,13 @@ fn init() !void {
     // Configure ImGui styling.
     const style = c.ImGui_GetStyle();
     c.ImGui_StyleColorsDark(style);
-    c.ImGuiStyle_ScaleAllSizes(style, display_scale);
+    c.ImGuiStyle_ScaleAllSizes(style, window.content_scale);
 
     // Setup ImGui rendering.
-    if (!c.cImGui_ImplSDL3_InitForSDLGPU(window)) gui.fatal("cImGui_ImplSDL3_InitForSDLGPU");
+    if (!c.cImGui_ImplSDL3_InitForSDLGPU(window.window)) gui.fatal("cImGui_ImplSDL3_InitForSDLGPU");
     var imgui_init = c.ImGui_ImplSDLGPU3_InitInfo{
-        .Device = device,
-        .ColorTargetFormat = c.SDL_GetGPUSwapchainTextureFormat(device, window),
+        .Device = window.device,
+        .ColorTargetFormat = window.getSwapchainTextureFormat(),
         .MSAASamples = c.SDL_GPU_SAMPLECOUNT_1,
     };
     if (!c.cImGui_ImplSDLGPU3_Init(&imgui_init)) gui.fatal("cImGui_ImplSDLGPU3_Init");
@@ -136,7 +123,7 @@ fn init() !void {
     try load_pipeline(false);
 
     // Create player object.
-    player = (try @TypeOf(player).initFromOBJLeaky(model_arena.allocator(), device, @embedFile("assets/models/Player.obj"), @embedFile("assets/models/Player.mtl")))[0];
+    player = (try @TypeOf(player).initFromOBJLeaky(model_arena.allocator(), window.device, @embedFile("assets/models/Player.obj"), @embedFile("assets/models/Player.mtl")))[0];
 
     // Set the start time.
     last_update_ns = c.SDL_GetTicksNS();
@@ -236,12 +223,8 @@ fn render(ticks: u64, dt: u64) !void {
     _ = ticks;
     const frame_time_ms = @as(f32, @floatFromInt(dt)) / 1e6;
 
-    const cmd = c.SDL_AcquireGPUCommandBuffer(device) orelse sdl.fatal("SDL_AcquireGPUCommandBuffer");
-
-    var swapchain_texture: ?*c.SDL_GPUTexture = null;
-    if (!c.SDL_WaitAndAcquireGPUSwapchainTexture(cmd, window, &swapchain_texture, null, null)) {
-        sdl.fatal("SDL_WaitAndAcquireGPUSwapchainTexture");
-    }
+    const cmd = try window.acquireCommandBuffer();
+    const swapchain_texture: ?*c.SDL_GPUTexture = try window.waitAndAcquireGPUSwapchainTexture(cmd);
     if (swapchain_texture == null) return;
 
     const tex = swapchain_texture.?;
@@ -308,30 +291,27 @@ fn render(ticks: u64, dt: u64) !void {
 }
 
 fn exit() !void {
-    _ = c.SDL_WaitForGPUIdle(device);
+    _ = c.SDL_WaitForGPUIdle(window.device);
 
     c.cImGui_ImplSDLGPU3_Shutdown();
     c.cImGui_ImplSDL3_Shutdown();
     c.ImGui_DestroyContext(null);
 
-    c.SDL_ReleaseGPUTexture(device, depth_texture);
+    c.SDL_ReleaseGPUTexture(window.device, depth_texture);
+    c.SDL_ReleaseGPUGraphicsPipeline(window.device, pipeline);
 
-    c.SDL_ReleaseGPUGraphicsPipeline(device, pipeline);
     player.deinit();
-
-    c.SDL_ReleaseWindowFromGPUDevice(device, window);
-    c.SDL_DestroyGPUDevice(device);
-    c.SDL_DestroyWindow(window);
-
-    c.SDL_Quit();
+    window.deinit();
 
     shader_arena.deinit();
     ecs_arena.deinit();
     model_arena.deinit();
+
+    c.SDL_Quit();
 }
 
 fn load_pipeline(recompile: bool) !void {
-    if (pipeline != null) c.SDL_ReleaseGPUGraphicsPipeline(device, pipeline);
+    if (pipeline != null) c.SDL_ReleaseGPUGraphicsPipeline(window.device, pipeline);
 
     var compiled_vertex_shader: gpu.compile.CompiledShader = undefined;
     var compiled_fragment_shader: gpu.compile.CompiledShader = undefined;
@@ -368,7 +348,7 @@ fn load_pipeline(recompile: bool) !void {
     const vertex_layout = gpu.slang.ShaderLayout.parseLeaky(shader_arena.allocator(), compiled_vertex_shader.layout).?;
     const fragment_layout = gpu.slang.ShaderLayout.parseLeaky(shader_arena.allocator(), compiled_fragment_shader.layout).?;
 
-    pipeline = gpu.slang.ShaderLayout.createPipeline(device, window, &vertex_layout, &fragment_layout, compiled_vertex_shader.spv, compiled_fragment_shader.spv, wireframe).?;
+    pipeline = gpu.slang.ShaderLayout.createPipeline(window.device, window.window, &vertex_layout, &fragment_layout, compiled_vertex_shader.spv, compiled_fragment_shader.spv, wireframe).?;
 
     if (recompile) gdn.info("Compiled and reloaded shaders!", .{});
 }
