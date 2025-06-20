@@ -29,13 +29,14 @@ const TARGET_FRAMETIME_NS: u64 = @intFromFloat(1e9 / 60.0);
 
 const FRAMES_IN_FLIGHT = 3;
 
-const MOVEMENT_SPEED: f32 = 4.0;
-const ROTATION_SPEED: f32 = 4.0;
+var MOVEMENT_SPEED: f32 = 4.0;
 const ZOOM_SPEED: f32 = 2;
 
 const MIN_FOV = 30.0;
 const INITIAL_FOV = 120.0;
 const MAX_FOV = 150.0;
+
+const PAN_SPEED: f32 = 2;
 
 // State
 
@@ -75,6 +76,7 @@ var should_exit = false;
 var debug = true;
 var wireframe = false;
 
+var right_mouse_pressed: bool = false;
 var keyboard_state: [*c]const bool = undefined;
 
 // Functions
@@ -144,7 +146,7 @@ fn init() !void {
     reg.addTypes(e_camera, cmps.Group_Transform);
     t_camera = reg.get(cmps.Position, e_camera);
     v_camera = reg.get(cmps.Velocity, e_camera);
-    t_camera.* = .{ .x = .{ 0, 5, 5 } };
+    t_camera.* = .{ .x = .{ 0, 3, -5 }, .r = .{ 0, std.math.degreesToRadians(90), 0 } };
 
     e_compass = reg.create();
     reg.addTypes(e_compass, cmps.Group_Transform);
@@ -174,7 +176,9 @@ fn init() !void {
     t_player = reg.get(cmps.Position, e_player);
     v_player = reg.get(cmps.Velocity, e_player);
 
-    t_player.r = .{ 0, std.math.degreesToRadians(180), 0 };
+    t_player.x = .{ 0, 3, 0 };
+
+    v_player.vr = .{ 1, 1, 1 };
 
     moveables = reg.group(.{}, cmps.Group_Transform, .{});
     renderables = reg.group(.{}, .{ cmps.Position, cmps.Renderable }, .{});
@@ -190,28 +194,30 @@ fn update() !void {
     // }
 
     try pollEvents();
-    try updateSystems(dt);
+    try updateSystems(ticks_ns, dt);
     try render(ticks_ns, dt);
 
     last_update_ns = ticks_ns;
 }
 
 fn pollEvents() !void {
+    v_camera.vr = .{ 0, 0, 0 };
+
     var event: c.SDL_Event = undefined;
     if (c.SDL_PollEvent(&event)) {
         _ = c.cImGui_ImplSDL3_ProcessEvent(&event);
         switch (event.type) {
-            c.SDL_EVENT_KEY_DOWN => {
+            c.SDL_EVENT_KEY_DOWN => if (!event.key.repeat) {
                 switch (event.key.scancode) {
                     // General
                     c.SDL_SCANCODE_ESCAPE => should_exit = true,
                     // Debug
-                    c.SDL_SCANCODE_R => if (!event.key.repeat and event.key.mod & c.SDL_KMOD_LCTRL != 0) try load_pipeline(true),
-                    c.SDL_SCANCODE_F => if (!event.key.repeat) {
+                    c.SDL_SCANCODE_R => if (event.key.mod & c.SDL_KMOD_LCTRL != 0) try load_pipeline(true),
+                    c.SDL_SCANCODE_F => {
                         wireframe = true;
                         try load_pipeline(false);
                     },
-                    c.SDL_SCANCODE_GRAVE => if (!event.key.repeat) {
+                    c.SDL_SCANCODE_GRAVE => {
                         debug = !debug;
                     },
                     else => {},
@@ -226,21 +232,40 @@ fn pollEvents() !void {
                     else => {},
                 }
             },
+            c.SDL_EVENT_MOUSE_MOTION => {
+                if (right_mouse_pressed) {
+                    v_camera.vr[1] = event.motion.xrel * PAN_SPEED;
+                    v_camera.vr[0] = -event.motion.yrel * PAN_SPEED;
+                }
+            },
             c.SDL_EVENT_MOUSE_WHEEL => {
                 fov = std.math.clamp(fov - event.wheel.y * ZOOM_SPEED, MIN_FOV, MAX_FOV);
                 proj_matrix = zm.Mat4f.perspective(std.math.degreesToRadians(fov), 1.0, 0.05, 100.0);
+            },
+            c.SDL_EVENT_MOUSE_BUTTON_DOWN => {
+                if (event.button.button == c.SDL_BUTTON_RIGHT) right_mouse_pressed = true;
+            },
+            c.SDL_EVENT_MOUSE_BUTTON_UP => {
+                if (event.button.button == c.SDL_BUTTON_RIGHT) right_mouse_pressed = false;
+            },
+            c.SDL_EVENT_WINDOW_MOUSE_LEAVE => {
+                right_mouse_pressed = false;
             },
             c.SDL_EVENT_QUIT => should_exit = true,
             else => {},
         }
     }
 
-    v_player.v[0] = (@as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_D]))) - @as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_A])))) * MOVEMENT_SPEED;
-    v_player.v[2] = (@as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_S]))) - @as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_W])))) * MOVEMENT_SPEED;
-    v_player.vr[1] = (@as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_Q]))) - @as(f32, @floatFromInt(@intFromBool(keyboard_state[c.SDL_SCANCODE_E])))) * ROTATION_SPEED;
+    // Free-Cam
+    v_camera.v =
+        zm.vec.scale(t_camera.right(), inputAxis(c.SDL_SCANCODE_A, c.SDL_SCANCODE_D) * MOVEMENT_SPEED) +
+        zm.vec.scale(t_camera.up(), inputAxis(c.SDL_SCANCODE_E, c.SDL_SCANCODE_Q) * MOVEMENT_SPEED) +
+        zm.vec.scale(t_camera.forward(), inputAxis(c.SDL_SCANCODE_W, c.SDL_SCANCODE_S) * MOVEMENT_SPEED);
 }
 
-fn updateSystems(dt: u64) !void {
+fn updateSystems(ticks: u64, dt: u64) !void {
+    _ = ticks;
+
     const dt_s = @as(f32, @floatFromInt(dt)) / 1e9;
     const dt_s3: zm.Vec3f = .{ dt_s, dt_s, dt_s };
 
@@ -255,6 +280,8 @@ fn updateSystems(dt: u64) !void {
         pos.x += vel.v * dt_s3;
         pos.r += vel.vr * dt_s3;
     }
+
+    if (!c.SDL_SetWindowRelativeMouseMode(window.window, right_mouse_pressed)) sdl.err("SDL_SetWindowRelativeMouseMode");
 }
 
 fn render(ticks: u64, dt: u64) !void {
@@ -289,7 +316,7 @@ fn render(ticks: u64, dt: u64) !void {
 
     const render_pass = c.SDL_BeginGPURenderPass(cmd, &color_target_info, 1, &depth_stencil_target_info) orelse sdl.fatal("SDL_BeginGPURenderPass");
 
-    const view_matrix = zm.Mat4f.lookAt(t_camera.x, .{ 0, 0, 0 }, zm.vec.up(f32));
+    const view_matrix = zm.Mat4f.lookAt(t_camera.x, t_camera.x + t_camera.forward(), zm.vec.up(f32));
 
     c.SDL_BindGPUGraphicsPipeline(render_pass, pipeline.?);
     c.SDL_PushGPUFragmentUniformData(cmd, 1, @ptrCast(&t_camera.x), @sizeOf(zm.Vec3f));
@@ -429,6 +456,8 @@ fn renderDebug(cmd: *c.SDL_GPUCommandBuffer, render_pass: *c.SDL_GPURenderPass, 
         @mod(std.math.radiansToDegrees(t_camera.r[2]), 360),
     );
     c.ImGui_Text("FoV (deg): %.2f", fov);
+    c.ImGui_SeparatorText("Mouse");
+    c.ImGui_Text("Right Pressed: %d", right_mouse_pressed);
     c.ImGui_End();
 
     // Render ImGui, prepare the draw data and submit the draw calls.
@@ -454,6 +483,13 @@ pub fn sdlMain() !void {
     try init();
     while (!should_exit) try update();
     try exit();
+}
+
+// Helpers
+
+fn inputAxis(pos: usize, neg: usize) f32 {
+    return @as(f32, @floatFromInt(@intFromBool(keyboard_state[pos]))) -
+        @as(f32, @floatFromInt(@intFromBool(keyboard_state[neg])));
 }
 
 // Tests
