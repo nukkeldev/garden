@@ -52,13 +52,15 @@ var e_player: ecs.Entity = undefined;
 var e_camera: ecs.Entity = undefined;
 
 var t_camera: *cmps.Position = undefined;
+var v_camera: *cmps.Velocity = undefined;
+
 var t_player: *cmps.Position = undefined;
 var v_player: *cmps.Velocity = undefined;
 
 var moveables: ecs.BasicGroup = undefined;
 var renderables: ecs.BasicGroup = undefined;
 
-var proj_matrix: zm.Mat4f = zm.Mat4f.perspective(std.math.degreesToRadians(60.0), 1.0, 0.05, 100.0);
+var proj_matrix: zm.Mat4f = zm.Mat4f.perspective(std.math.degreesToRadians(120.0), 1.0, 0.05, 100.0);
 
 var last_update_ns: u64 = 0;
 var should_exit = false;
@@ -134,7 +136,8 @@ fn init() !void {
     e_camera = reg.create();
     reg.addTypes(e_camera, cmps.Group_Transform);
     t_camera = reg.get(cmps.Position, e_camera);
-    t_camera.* = .{ .x = .{ 0, 3, 3 } };
+    v_camera = reg.get(cmps.Velocity, e_camera);
+    t_camera.* = .{ .x = .{ 0, 5, 5 } };
 
     e_player = reg.create();
     reg.add(e_player, cmps.Renderable{
@@ -261,7 +264,7 @@ fn render(ticks: u64, dt: u64) !void {
 
     const render_pass = c.SDL_BeginGPURenderPass(cmd, &color_target_info, 1, &depth_stencil_target_info) orelse sdl.fatal("SDL_BeginGPURenderPass");
 
-    const view_matrix = zm.Mat4f.lookAt(t_camera.x, .{ 0, 0, 0 }, .{ 0, 1, 0 });
+    const view_matrix = zm.Mat4f.lookAt(t_camera.x, .{ 0, 0, 0 }, zm.vec.up(f32));
     const view_proj_matrix = proj_matrix.multiply(view_matrix);
 
     c.SDL_BindGPUGraphicsPipeline(render_pass, pipeline.?);
