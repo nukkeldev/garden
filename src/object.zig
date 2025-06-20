@@ -90,7 +90,7 @@ pub const Object = struct {
             const v0: zm.Vec3f = vertices[indices[fragmentId * 3]].position;
             const v1: zm.Vec3f = vertices[indices[fragmentId * 3 + 1]].position;
             const v2: zm.Vec3f = vertices[indices[fragmentId * 3 + 2]].position;
-            const normal = zm.vec.normalize(zm.vec.cross(v2 - v0, v1 - v0));
+            const normal = zm.vec.normalize(zm.vec.cross(v1 - v0, v2 - v0));
             fragment_normals_data[fragmentId] = .{ normal[0], normal[1], normal[2], 0 };
         }
 

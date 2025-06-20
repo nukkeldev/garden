@@ -33,7 +33,7 @@ VertexStageOutput vertexMain(VertexInput input)
 
     output.vertex.fragmentPosition = mul(pfd.model, float4(input.position, 1.0)).xyz;
     output.vertex.color = input.color;
-    output.sv_position = mul(pfd.proj, mul(pfd.view, mul(pfd.model, float4(input.position, 1.0))));
+    output.sv_position = mul(pfd.proj, mul(pfd.view, float4(output.vertex.fragmentPosition, 1.0)));
 
     return output;
 }

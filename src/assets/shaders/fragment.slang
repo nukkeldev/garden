@@ -4,7 +4,7 @@ StructuredBuffer<float4> fragmentNormals;
 uniform ConstantBuffer<float4x4> normalMat;
 
 static float3 lightColor = float3(1.0, 0.0, 0.0);
-static float3 lightPosition = float3(0.0, -3.0, 0.0);
+static float3 lightPosition = float3(0.0, 3.0, 0.0);
 
 // TODO: Import from vertex once you figure out how to not import uniforms.
 struct VertexOutput
@@ -35,5 +35,6 @@ Fragment fragmentMain(
 
     Fragment output;
     output.color = float4((ambient + diffuse) * input.color, 1.0);
+    // output.color = float4(norm, 1.0);
     return output;
 }
