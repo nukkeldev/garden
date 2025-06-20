@@ -167,7 +167,7 @@ fn init() !void {
             window.device,
             @embedFile("assets/models/Player.obj"),
             @embedFile("assets/models/Player.mtl"),
-        ))[0..1],
+        )),
     });
     reg.add(e_player, cmps.Scale{ .scale = .{ 0.5, 0.5, 0.5 } });
     reg.addTypes(e_player, cmps.Group_Transform);
@@ -292,6 +292,7 @@ fn render(ticks: u64, dt: u64) !void {
     const view_matrix = zm.Mat4f.lookAt(t_camera.x, .{ 0, 0, 0 }, zm.vec.up(f32));
 
     c.SDL_BindGPUGraphicsPipeline(render_pass, pipeline.?);
+    c.SDL_PushGPUFragmentUniformData(cmd, 1, @ptrCast(&t_camera.x), @sizeOf(zm.Vec3f));
 
     var renderables_iter = renderables.iterator();
     while (renderables_iter.next()) |entity| {
