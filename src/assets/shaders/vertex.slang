@@ -1,5 +1,12 @@
 [[vk::binding(0, 1)]]
-uniform ConstantBuffer<float4x4> mvp;
+uniform ConstantBuffer<PerFrameData> pfd;
+
+struct PerFrameData
+{
+    float4x4 model;
+    float4x4 view;
+    float4x4 proj;
+}
 
 struct VertexInput
 {
@@ -9,6 +16,7 @@ struct VertexInput
 
 struct VertexOutput
 {
+    float3 fragmentPosition;
     float3 color;
 };
 
@@ -23,8 +31,9 @@ VertexStageOutput vertexMain(VertexInput input)
 {
     VertexStageOutput output;
 
+    output.vertex.fragmentPosition = mul(pfd.model, float4(input.position, 1.0)).xyz;
     output.vertex.color = input.color;
-    output.sv_position = mul(mvp, float4(input.position, 1.0));
+    output.sv_position = mul(pfd.proj, mul(pfd.view, mul(pfd.model, float4(input.position, 1.0))));
 
     return output;
 }

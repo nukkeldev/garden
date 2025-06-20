@@ -54,6 +54,7 @@ var depth_texture: *c.SDL_GPUTexture = undefined;
 var reg: ecs.Registry = undefined;
 
 var e_player: ecs.Entity = undefined;
+var e_compass: ecs.Entity = undefined;
 var e_camera: ecs.Entity = undefined;
 
 var t_camera: *cmps.Position = undefined;
@@ -145,14 +146,28 @@ fn init() !void {
     v_camera = reg.get(cmps.Velocity, e_camera);
     t_camera.* = .{ .x = .{ 0, 5, 5 } };
 
+    e_compass = reg.create();
+    reg.addTypes(e_compass, cmps.Group_Transform);
+    reg.get(cmps.Position, e_compass).* = .{ .x = .{ 0, -0.25, 0 } };
+    reg.get(cmps.Velocity, e_compass).* = .{ .vr = .{ 0, 0.25, 0 } };
+    reg.add(e_compass, cmps.Scale{ .scale = .{ 0.25, 0.25, 0.25 } });
+    reg.add(e_compass, cmps.Renderable{
+        .objects = try Object.initFromOBJLeaky(
+            model_arena.allocator(),
+            window.device,
+            @embedFile("assets/models/Compass.obj"),
+            @embedFile("assets/models/Compass.mtl"),
+        ),
+    });
+
     e_player = reg.create();
     reg.add(e_player, cmps.Renderable{
-        .objects = try Object.initFromOBJLeaky(
+        .objects = (try Object.initFromOBJLeaky(
             model_arena.allocator(),
             window.device,
             @embedFile("assets/models/Player.obj"),
             @embedFile("assets/models/Player.mtl"),
-        ),
+        ))[0..1],
     });
     reg.add(e_player, cmps.Scale{ .scale = .{ 0.5, 0.5, 0.5 } });
     reg.addTypes(e_player, cmps.Group_Transform);
@@ -275,7 +290,6 @@ fn render(ticks: u64, dt: u64) !void {
     const render_pass = c.SDL_BeginGPURenderPass(cmd, &color_target_info, 1, &depth_stencil_target_info) orelse sdl.fatal("SDL_BeginGPURenderPass");
 
     const view_matrix = zm.Mat4f.lookAt(t_camera.x, .{ 0, 0, 0 }, zm.vec.up(f32));
-    const view_proj_matrix = proj_matrix.multiply(view_matrix);
 
     c.SDL_BindGPUGraphicsPipeline(render_pass, pipeline.?);
 
@@ -293,7 +307,14 @@ fn render(ticks: u64, dt: u64) !void {
             model_matrix = model_matrix.multiply(zm.Mat4f.scaling(scale.scale[0], scale.scale[1], scale.scale[2]));
         }
 
-        c.SDL_PushGPUVertexUniformData(cmd, 0, @ptrCast(&view_proj_matrix.multiply(model_matrix)), @sizeOf(zm.Mat4f));
+        const normal = model_matrix.inverse().transpose().data;
+
+        c.SDL_PushGPUFragmentUniformData(cmd, 0, @ptrCast(&normal), @sizeOf([16]f32));
+        c.SDL_PushGPUVertexUniformData(cmd, 0, @ptrCast(&gpu.PerFrameData{
+            .model = model_matrix.data,
+            .view = view_matrix.data,
+            .proj = proj_matrix.data,
+        }), @sizeOf(gpu.PerFrameData));
 
         for (ren.objects) |mesh| {
             mesh.draw(render_pass);

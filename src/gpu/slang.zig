@@ -13,6 +13,8 @@ pub const ShaderLayout = struct {
     entry_point_name: []const u8,
     stage: c.SDL_GPUShaderStage,
     vertex_input: ?*c.SDL_GPUVertexInputState = null,
+
+    num_storage_buffers: usize = 0,
     num_uniform_buffers: usize = 0,
 
     const Self = @This();
@@ -28,18 +30,18 @@ pub const ShaderLayout = struct {
             .stage = undefined,
         };
 
-        { // Entry point parsing
+        outer: { // Entry point parsing
             const entry_points = parsed.value.object.get("entryPoints").?.array;
             const entry_point = entry_points.getLast().object;
 
             self.entry_point_name = allocator.dupe(u8, entry_point.get("name").?.string) catch log.oom();
-            self.stage = outer: {
+            self.stage = inner: {
                 const raw_stage = entry_point.get("stage").?.string;
 
                 if (std.mem.eql(u8, raw_stage, "vertex")) {
-                    break :outer c.SDL_GPU_SHADERSTAGE_VERTEX;
+                    break :inner c.SDL_GPU_SHADERSTAGE_VERTEX;
                 } else if (std.mem.eql(u8, raw_stage, "fragment")) {
-                    break :outer c.SDL_GPU_SHADERSTAGE_FRAGMENT;
+                    break :inner c.SDL_GPU_SHADERSTAGE_FRAGMENT;
                 } else {
                     log.gdn.err("Invalid Shader Type: {s}!", .{raw_stage});
                     return null;
@@ -47,7 +49,7 @@ pub const ShaderLayout = struct {
             };
 
             // Skip parameter parsing for fragment shaders.
-            if (self.stage == c.SDL_GPU_SHADERSTAGE_FRAGMENT) return self;
+            if (self.stage == c.SDL_GPU_SHADERSTAGE_FRAGMENT) break :outer;
 
             // Parse the parameters for this entry point if present.
             const parameters = entry_point.get("parameters").?.array;
@@ -70,7 +72,7 @@ pub const ShaderLayout = struct {
                     const ty = field.object.get("type").?.object;
                     const type_kind = ty.get("kind").?.string;
 
-                    const sdl_type: c.SDL_GPUVertexElementFormat, const size: usize = if (std.mem.eql(u8, type_kind, "vector")) outer: {
+                    const sdl_type: c.SDL_GPUVertexElementFormat, const size: usize = if (std.mem.eql(u8, type_kind, "vector")) inner: {
                         const count: usize = @intCast(ty.get("elementCount").?.integer);
                         const element_type = ty.get("elementType").?.object;
                         const element_type_kind = element_type.get("kind").?.string;
@@ -85,7 +87,7 @@ pub const ShaderLayout = struct {
                                     4 => c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4,
                                     else => unreachable,
                                 };
-                                break :outer .{ @intCast(sdl_type), @sizeOf(f32) * count };
+                                break :inner .{ @intCast(sdl_type), @sizeOf(f32) * count };
                             } else {
                                 log.gdn.err("TODO: Scalar type \"{s}\" not yet supported!", .{scalar_type});
                                 return null;
@@ -124,7 +126,12 @@ pub const ShaderLayout = struct {
         } // Entry point parsing
 
         { // Paramater parsing
-            self.num_uniform_buffers = parsed.value.object.get("parameters").?.array.items.len;
+            for (parsed.value.object.get("parameters").?.array.items) |param| {
+                const kind = param.object.get("type").?.object.get("kind").?.string;
+
+                if (std.mem.eql(u8, kind, "resource")) self.num_storage_buffers += 1;
+                if (std.mem.eql(u8, kind, "constantBuffer")) self.num_uniform_buffers += 1;
+            }
         } // Paramater parsing
 
         return self;
@@ -138,6 +145,7 @@ pub const ShaderLayout = struct {
             .format = c.SDL_GPU_SHADERFORMAT_SPIRV,
             .stage = self.stage,
             .num_uniform_buffers = @intCast(self.num_uniform_buffers),
+            .num_storage_buffers = @intCast(self.num_storage_buffers),
         });
         if (shader == null) log.sdl.err("SDL_CreateGPUShader");
 
