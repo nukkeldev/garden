@@ -1,10 +1,10 @@
 const std = @import("std");
 const log = @import("../log.zig");
 
-const EMBEDDED_VERTEX_SHADER = @embedFile("../assets/shaders/compiled/shader.vert.spv");
-const EMBEDDED_VERTEX_SHADER_LAYOUT = @embedFile("../assets/shaders/compiled/shader.vert.layout");
-const EMBEDDED_FRAGMENT_SHADER = @embedFile("../assets/shaders/compiled/shader.frag.spv");
-const EMBEDDED_FRAGMENT_SHADER_LAYOUT = @embedFile("../assets/shaders/compiled/shader.frag.layout");
+const EMBEDDED_VERTEX_SHADER = @embedFile("../assets/shaders/compiled/vertex.spv");
+const EMBEDDED_VERTEX_SHADER_LAYOUT = @embedFile("../assets/shaders/compiled/vertex.layout");
+const EMBEDDED_FRAGMENT_SHADER = @embedFile("../assets/shaders/compiled/fragment.spv");
+const EMBEDDED_FRAGMENT_SHADER_LAYOUT = @embedFile("../assets/shaders/compiled/fragment.layout");
 
 pub const CompiledShader = struct {
     allocator: ?std.mem.Allocator,
@@ -49,8 +49,8 @@ pub const CompiledShader = struct {
 
         log.gdn.debug("Compiling {s} shader: {s}/{s}.slang...", .{ ext, dirname, filename });
 
-        const spv_path = std.fmt.allocPrint(allocator, "{s}/compiled/{s}.{s}.spv", .{ dirname, filename, ext[0..4] }) catch log.oom();
-        const layout_path = std.fmt.allocPrint(allocator, "{s}/compiled/{s}.{s}.layout", .{ dirname, filename, ext[0..4] }) catch log.oom();
+        const spv_path = std.fmt.allocPrint(allocator, "{s}/compiled/{s}.spv", .{ dirname, filename }) catch log.oom();
+        const layout_path = std.fmt.allocPrint(allocator, "{s}/compiled/{s}.layout", .{ dirname, filename }) catch log.oom();
         defer allocator.free(spv_path);
         defer allocator.free(layout_path);
 
@@ -74,6 +74,7 @@ pub const CompiledShader = struct {
                 "-profile",
                 "spirv_1_3",
                 "-fvk-use-entrypoint-name",
+                "-matrix-layout-row-major",
             },
             allocator,
         );

@@ -4,7 +4,7 @@ const gpu = @import("gpu.zig");
 const ffi = @import("ffi.zig");
 const log = @import("log.zig");
 const ecs = @import("ecs");
-const components = @import("components.zig");
+const cmps = @import("components.zig");
 const zm = @import("zm");
 
 const Object = @import("object.zig").Object;
@@ -29,7 +29,7 @@ const TARGET_FRAMETIME_NS: u64 = @intFromFloat(1e9 / 60.0);
 
 const FRAMES_IN_FLIGHT = 3;
 
-const MOVEMENT_SPEED: f32 = 1.0;
+const MOVEMENT_SPEED: f32 = 4.0;
 const ROTATION_SPEED: f32 = 4.0;
 
 // State
@@ -46,17 +46,17 @@ var im_context: *c.ImGuiContext = undefined;
 var pipeline: ?*c.SDL_GPUGraphicsPipeline = null;
 var depth_texture: *c.SDL_GPUTexture = undefined;
 
-var player: []Object = undefined;
 var reg: ecs.Registry = undefined;
 
 var e_player: ecs.Entity = undefined;
 var e_camera: ecs.Entity = undefined;
 
-var t_player: *components.Transform1 = undefined;
-var v_player: *components.Transform2 = undefined;
-var t_camera: *components.Transform1 = undefined;
+var t_camera: *cmps.Position = undefined;
+var t_player: *cmps.Position = undefined;
+var v_player: *cmps.Velocity = undefined;
 
-var transformables: ecs.OwningGroup = undefined;
+var moveables: ecs.BasicGroup = undefined;
+var renderables: ecs.BasicGroup = undefined;
 
 var proj_matrix: zm.Mat4f = zm.Mat4f.perspective(std.math.degreesToRadians(60.0), 1.0, 0.05, 100.0);
 
@@ -122,9 +122,6 @@ fn init() !void {
     // Create the rendering pipeline.
     try load_pipeline(false);
 
-    // Create player object.
-    player = try Object.initFromOBJLeaky(model_arena.allocator(), window.device, @embedFile("assets/models/Player.obj"), @embedFile("assets/models/Player.mtl"));
-
     // Set the start time.
     last_update_ns = c.SDL_GetTicksNS();
 
@@ -135,16 +132,28 @@ fn init() !void {
     reg = .init(ecs_arena.allocator());
 
     e_camera = reg.create();
-    reg.add(e_camera, components.Transform1{ .x = .{ 0, 3, 3 } });
-    reg.addTypes(e_camera, .{ components.Transform2, components.Transform3 });
-    t_camera = reg.get(components.Transform1, e_camera);
+    reg.addTypes(e_camera, cmps.Group_Transform);
+    t_camera = reg.get(cmps.Position, e_camera);
+    t_camera.* = .{ .x = .{ 0, 3, 3 } };
 
     e_player = reg.create();
-    reg.addTypes(e_player, .{ components.Transform1, components.Transform2, components.Transform3 });
-    t_player = reg.get(components.Transform1, e_player);
-    v_player = reg.get(components.Transform2, e_player);
+    reg.add(e_player, cmps.Renderable{
+        .objects = try Object.initFromOBJLeaky(
+            model_arena.allocator(),
+            window.device,
+            @embedFile("assets/models/Player.obj"),
+            @embedFile("assets/models/Player.mtl"),
+        ),
+    });
+    reg.add(e_player, cmps.Scale{ .scale = .{ 0.5, 0.5, 0.5 } });
+    reg.addTypes(e_player, cmps.Group_Transform);
+    t_player = reg.get(cmps.Position, e_player);
+    v_player = reg.get(cmps.Velocity, e_player);
 
-    transformables = reg.group(.{ components.Transform1, components.Transform2, components.Transform3 }, .{}, .{});
+    t_player.r = .{ 0, std.math.degreesToRadians(180), 0 };
+
+    moveables = reg.group(.{}, cmps.Group_Transform, .{});
+    renderables = reg.group(.{}, .{ cmps.Position, cmps.Renderable }, .{});
 }
 
 fn update() !void {
@@ -207,15 +216,16 @@ fn updateSystems(dt: u64) !void {
     const dt_s = @as(f32, @floatFromInt(dt)) / 1e9;
     const dt_s3: zm.Vec3f = .{ dt_s, dt_s, dt_s };
 
-    var iter_23 = transformables.iterator(struct { vel: *components.Transform2, acc: *components.Transform3 });
-    while (iter_23.next()) |entity| {
-        entity.vel.*.v += entity.acc.*.a * dt_s3;
-        entity.vel.*.vr += entity.acc.*.ar * dt_s3;
-    }
-    var iter_12 = transformables.iterator(struct { pos: *components.Transform1, vel: *components.Transform2 });
-    while (iter_12.next()) |entity| {
-        entity.pos.*.x += entity.vel.*.v * dt_s3;
-        entity.pos.*.r += entity.vel.*.vr * dt_s3;
+    var iter = moveables.iterator();
+    while (iter.next()) |entity| {
+        const pos = reg.get(cmps.Position, entity);
+        const vel = reg.get(cmps.Velocity, entity);
+        const acc = reg.get(cmps.Acceleration, entity);
+
+        vel.v += acc.a * dt_s3;
+        vel.vr += acc.ar * dt_s3;
+        pos.x += vel.v * dt_s3;
+        pos.r += vel.vr * dt_s3;
     }
 }
 
@@ -251,14 +261,31 @@ fn render(ticks: u64, dt: u64) !void {
 
     const render_pass = c.SDL_BeginGPURenderPass(cmd, &color_target_info, 1, &depth_stencil_target_info) orelse sdl.fatal("SDL_BeginGPURenderPass");
 
-    const model_matrix = zm.Mat4f.translationVec3(t_player.x).multiply(.rotation(.{ 0, 1, 0 }, t_player.r[1])).multiply(.scaling(0.5, 0.5, 0.5));
     const view_matrix = zm.Mat4f.lookAt(t_camera.x, .{ 0, 0, 0 }, .{ 0, 1, 0 });
-    const model_view_proj = proj_matrix.multiply(view_matrix).multiply(model_matrix).transpose();
+    const view_proj_matrix = proj_matrix.multiply(view_matrix);
 
     c.SDL_BindGPUGraphicsPipeline(render_pass, pipeline.?);
 
-    c.SDL_PushGPUVertexUniformData(cmd, 0, @ptrCast(&model_view_proj), @sizeOf(zm.Mat4f));
-    for (player) |obj| obj.draw(render_pass);
+    var renderables_iter = renderables.iterator();
+    while (renderables_iter.next()) |entity| {
+        const pos = reg.get(cmps.Position, entity);
+        const ren = reg.get(cmps.Renderable, entity);
+
+        var model_matrix = zm.Mat4f.translationVec3(pos.x)
+            .multiply(zm.Mat4f.rotation(zm.vec.right(f32), pos.r[0]))
+            .multiply(zm.Mat4f.rotation(zm.vec.up(f32), pos.r[1]))
+            .multiply(zm.Mat4f.rotation(zm.vec.forward(f32), pos.r[2]));
+
+        if (reg.tryGet(cmps.Scale, entity)) |scale| {
+            model_matrix = model_matrix.multiply(zm.Mat4f.scaling(scale.scale[0], scale.scale[1], scale.scale[2]));
+        }
+
+        c.SDL_PushGPUVertexUniformData(cmd, 0, @ptrCast(&view_proj_matrix.multiply(model_matrix)), @sizeOf(zm.Mat4f));
+
+        for (ren.objects) |mesh| {
+            mesh.draw(render_pass);
+        }
+    }
 
     // ImGui Rendering
 
@@ -300,7 +327,10 @@ fn exit() !void {
     c.SDL_ReleaseGPUTexture(window.device, depth_texture);
     c.SDL_ReleaseGPUGraphicsPipeline(window.device, pipeline);
 
-    for (player) |obj| obj.deinit();
+    var renderables_iter = renderables.iterator();
+    while (renderables_iter.next()) |entity| {
+        for (reg.get(cmps.Renderable, entity).objects) |mesh| mesh.deinit();
+    }
     window.deinit();
 
     shader_arena.deinit();
@@ -317,16 +347,16 @@ fn load_pipeline(recompile: bool) !void {
     var compiled_fragment_shader: gpu.compile.CompiledShader = undefined;
 
     if (recompile) {
-        compiled_vertex_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/assets/shaders/shader.slang", .Vertex, pipeline == null, true)).?;
-        compiled_fragment_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/assets/shaders/shader.slang", .Fragment, pipeline == null, true)).?;
+        compiled_vertex_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/assets/shaders/vertex.slang", .Vertex, pipeline == null, true)).?;
+        compiled_fragment_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/assets/shaders/fragment.slang", .Fragment, pipeline == null, true)).?;
     } else {
         compiled_vertex_shader = .{
             .allocator = shader_arena.allocator(),
-            .spv = std.fs.cwd().readFileAlloc(shader_arena.allocator(), "src/assets/shaders/compiled/shader.vert.spv", std.math.maxInt(usize)) catch {
+            .spv = std.fs.cwd().readFileAlloc(shader_arena.allocator(), "src/assets/shaders/compiled/vertex.spv", std.math.maxInt(usize)) catch {
                 log.gdn.err("Failed to read vertex shader!", .{});
                 return;
             },
-            .layout = std.fs.cwd().readFileAlloc(shader_arena.allocator(), "src/assets/shaders/compiled/shader.vert.layout", std.math.maxInt(usize)) catch {
+            .layout = std.fs.cwd().readFileAlloc(shader_arena.allocator(), "src/assets/shaders/compiled/vertex.layout", std.math.maxInt(usize)) catch {
                 log.gdn.err("Failed to read vertex shader layout!", .{});
                 return;
             },
@@ -334,11 +364,11 @@ fn load_pipeline(recompile: bool) !void {
 
         compiled_fragment_shader = .{
             .allocator = shader_arena.allocator(),
-            .spv = std.fs.cwd().readFileAlloc(shader_arena.allocator(), "src/assets/shaders/compiled/shader.frag.spv", std.math.maxInt(usize)) catch {
+            .spv = std.fs.cwd().readFileAlloc(shader_arena.allocator(), "src/assets/shaders/compiled/fragment.spv", std.math.maxInt(usize)) catch {
                 log.gdn.err("Failed to read fragment shader!", .{});
                 return;
             },
-            .layout = std.fs.cwd().readFileAlloc(shader_arena.allocator(), "src/assets/shaders/compiled/shader.frag.layout", std.math.maxInt(usize)) catch {
+            .layout = std.fs.cwd().readFileAlloc(shader_arena.allocator(), "src/assets/shaders/compiled/fragment.layout", std.math.maxInt(usize)) catch {
                 log.gdn.err("Failed to read fragment shader layout!", .{});
                 return;
             },

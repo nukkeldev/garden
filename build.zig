@@ -102,7 +102,7 @@ fn buildShaders(b: *std.Build) !*std.Build.Step {
 
     const vert = b.addSystemCommand(&.{
         "slangc",
-        "src/assets/shaders/shader.slang",
+        "src/assets/shaders/vertex.slang",
         "-entry",
         "vertexMain",
         "-stage",
@@ -110,17 +110,18 @@ fn buildShaders(b: *std.Build) !*std.Build.Step {
         "-profile",
         "spirv_1_3",
         "-o",
-        "src/assets/shaders/compiled/shader.vert.spv",
+        "src/assets/shaders/compiled/vertex.spv",
         "-fvk-use-entrypoint-name",
         "-reflection-json",
-        "src/assets/shaders/compiled/shader.vert.layout",
+        "src/assets/shaders/compiled/vertex.layout",
+        "-matrix-layout-row-major",
     });
     vert.step.dependOn(&mkdir.step);
     step.dependOn(&vert.step);
 
     const frag = b.addSystemCommand(&.{
         "slangc",
-        "src/assets/shaders/shader.slang",
+        "src/assets/shaders/fragment.slang",
         "-entry",
         "fragmentMain",
         "-stage",
@@ -128,10 +129,11 @@ fn buildShaders(b: *std.Build) !*std.Build.Step {
         "-profile",
         "spirv_1_3",
         "-o",
-        "src/assets/shaders/compiled/shader.frag.spv",
+        "src/assets/shaders/compiled/fragment.spv",
         "-fvk-use-entrypoint-name",
         "-reflection-json",
-        "src/assets/shaders/compiled/shader.frag.layout",
+        "src/assets/shaders/compiled/fragment.layout",
+        "-matrix-layout-row-major",
     });
     frag.step.dependOn(&mkdir.step);
     step.dependOn(&frag.step);
