@@ -3,7 +3,7 @@
 zig-out/
 .zig-cache/
 
-src/shaders/compiled/
+src/assets/shaders/compiled
 
 imgui.ini
 
