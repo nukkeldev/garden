@@ -31,6 +31,11 @@ const FRAMES_IN_FLIGHT = 3;
 
 const MOVEMENT_SPEED: f32 = 4.0;
 const ROTATION_SPEED: f32 = 4.0;
+const ZOOM_SPEED: f32 = 2;
+
+const MIN_FOV = 30.0;
+const INITIAL_FOV = 120.0;
+const MAX_FOV = 150.0;
 
 // State
 
@@ -60,7 +65,8 @@ var v_player: *cmps.Velocity = undefined;
 var moveables: ecs.BasicGroup = undefined;
 var renderables: ecs.BasicGroup = undefined;
 
-var proj_matrix: zm.Mat4f = zm.Mat4f.perspective(std.math.degreesToRadians(120.0), 1.0, 0.05, 100.0);
+var fov: f32 = INITIAL_FOV;
+var proj_matrix: zm.Mat4f = zm.Mat4f.perspective(std.math.degreesToRadians(INITIAL_FOV), 1.0, 0.05, 100.0);
 
 var last_update_ns: u64 = 0;
 var should_exit = false;
@@ -205,6 +211,10 @@ fn pollEvents() !void {
                     else => {},
                 }
             },
+            c.SDL_EVENT_MOUSE_WHEEL => {
+                fov = std.math.clamp(fov - event.wheel.y * ZOOM_SPEED, MIN_FOV, MAX_FOV);
+                proj_matrix = zm.Mat4f.perspective(std.math.degreesToRadians(fov), 1.0, 0.05, 100.0);
+            },
             c.SDL_EVENT_QUIT => should_exit = true,
             else => {},
         }
@@ -291,28 +301,7 @@ fn render(ticks: u64, dt: u64) !void {
     }
 
     // ImGui Rendering
-
-    if (debug) {
-        // Begin a new ImGui frame.
-        c.cImGui_ImplSDLGPU3_NewFrame();
-        c.cImGui_ImplSDL3_NewFrame();
-        c.ImGui_NewFrame();
-
-        // Show the ImGui metrics window.
-        c.ImGui_ShowMetricsWindow(null);
-
-        // Show a performance metrics window.
-        _ = c.ImGui_Begin("Performance", null, c.ImGuiWindowFlags_NoResize | c.ImGuiWindowFlags_NoDecoration | c.ImGuiWindowFlags_AlwaysAutoResize | c.ImGuiWindowFlags_NoMove);
-        c.ImGui_SetWindowPos(.{ .x = 5.0, .y = 5.0 }, c.ImGuiCond_None);
-        c.ImGui_Text("FPS: %-6.2f\nFrame Time (ms): %-6.3f", 1e3 / frame_time_ms, frame_time_ms);
-        c.ImGui_End();
-
-        // Render ImGui, prepare the draw data and submit the draw calls.
-        c.ImGui_Render();
-        const draw_data: *c.ImDrawData = c.ImGui_GetDrawData();
-        c.cImgui_ImplSDLGPU3_PrepareDrawData(draw_data, cmd);
-        c.cImGui_ImplSDLGPU3_RenderDrawData(draw_data, cmd, render_pass);
-    }
+    if (debug) renderDebug(cmd, render_pass, frame_time_ms);
 
     // Submit the render pass.
     c.SDL_EndGPURenderPass(render_pass);
@@ -384,6 +373,47 @@ fn load_pipeline(recompile: bool) !void {
     pipeline = gpu.slang.ShaderLayout.createPipeline(window.device, window.window, &vertex_layout, &fragment_layout, compiled_vertex_shader.spv, compiled_fragment_shader.spv, wireframe).?;
 
     if (recompile) gdn.info("Compiled and reloaded shaders!", .{});
+}
+
+fn renderDebug(cmd: *c.SDL_GPUCommandBuffer, render_pass: *c.SDL_GPURenderPass, frame_time_ms: f32) void {
+    // Begin a new ImGui frame.
+    c.cImGui_ImplSDLGPU3_NewFrame();
+    c.cImGui_ImplSDL3_NewFrame();
+    c.ImGui_NewFrame();
+
+    // Show the ImGui metrics window.
+    // c.ImGui_ShowMetricsWindow(null);
+
+    // Show a performance metrics window.
+    _ = c.ImGui_Begin("-", null, c.ImGuiWindowFlags_NoResize | c.ImGuiWindowFlags_NoDecoration | c.ImGuiWindowFlags_AlwaysAutoResize | c.ImGuiWindowFlags_NoMove);
+    c.ImGui_SetWindowPos(.{ .x = 5.0, .y = 5.0 }, c.ImGuiCond_None);
+    c.ImGui_SeparatorText("Performance");
+    c.ImGui_Text("FPS: %-6.2f", 1e3 / frame_time_ms);
+    c.ImGui_Text("Frame Time (ms): %-6.3f", frame_time_ms);
+    c.ImGui_SeparatorText("Player");
+    c.ImGui_Text("Position: (%.2f, %.2f, %.2f)", t_player.x[0], t_player.x[1], t_player.x[2]);
+    c.ImGui_Text(
+        "Rotation (deg): (%.2f, %.2f, %.2f)",
+        @mod(std.math.radiansToDegrees(t_player.r[0]), 360),
+        @mod(std.math.radiansToDegrees(t_player.r[1]), 360),
+        @mod(std.math.radiansToDegrees(t_player.r[2]), 360),
+    );
+    c.ImGui_SeparatorText("Camera");
+    c.ImGui_Text("Position: (%.2f, %.2f, %.2f)", t_camera.x[0], t_camera.x[1], t_camera.x[2]);
+    c.ImGui_Text(
+        "Rotation (deg): (%.2f, %.2f, %.2f)",
+        @mod(std.math.radiansToDegrees(t_camera.r[0]), 360),
+        @mod(std.math.radiansToDegrees(t_camera.r[1]), 360),
+        @mod(std.math.radiansToDegrees(t_camera.r[2]), 360),
+    );
+    c.ImGui_Text("FoV (deg): %.2f", fov);
+    c.ImGui_End();
+
+    // Render ImGui, prepare the draw data and submit the draw calls.
+    c.ImGui_Render();
+    const draw_data: *c.ImDrawData = c.ImGui_GetDrawData();
+    c.cImgui_ImplSDLGPU3_PrepareDrawData(draw_data, cmd);
+    c.cImGui_ImplSDLGPU3_RenderDrawData(draw_data, cmd, render_pass);
 }
 
 // Main
