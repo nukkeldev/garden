@@ -1,13 +1,14 @@
 const std = @import("std");
 
+const zm = @import("zm");
+
 const gpu = @import("gpu.zig");
 const ffi = @import("ffi.zig");
 const log = @import("log.zig");
-const ecs = @import("ecs");
-const cmps = @import("components.zig");
-const zm = @import("zm");
+const transform = @import("transform.zig");
 
-const Object = @import("object.zig").Object;
+const Model = @import("object.zig").Model;
+const Mesh = @import("object.zig").Mesh;
 const Window = @import("window.zig").Window;
 
 const gdn = log.gdn;
@@ -52,20 +53,35 @@ var im_context: *c.ImGuiContext = undefined;
 var pipeline: ?*c.SDL_GPUGraphicsPipeline = null;
 var depth_texture: *c.SDL_GPUTexture = undefined;
 
-var reg: ecs.Registry = undefined;
+var camera: transform.O012 = .{
+    .o0 = .{
+        .translation = .{ 0, 3, -5 },
+        .rotation = .{ 0, std.math.degreesToRadians(90), 0 },
+    },
+};
+var player: Model = .{
+    .meshes = undefined,
+    .o012 = .{
+        .o0 = .{
+            .translation = .{ 0, 3, 0 },
+            .scale = @splat(0.5),
+        },
+        .o1 = .{ .rotation = .{ 1, 1, 1 } },
+    },
+};
+var compass: Model = .{
+    .meshes = undefined,
+    .o012 = .{
+        .o0 = .{
+            .translation = .{ 0, -0.25, 0 },
+            .scale = @splat(0.25),
+        },
+        .o1 = .{ .rotation = .{ 0, 0.25, 0 } },
+    },
+};
 
-var e_player: ecs.Entity = undefined;
-var e_compass: ecs.Entity = undefined;
-var e_camera: ecs.Entity = undefined;
-
-var t_camera: *cmps.Position = undefined;
-var v_camera: *cmps.Velocity = undefined;
-
-var t_player: *cmps.Position = undefined;
-var v_player: *cmps.Velocity = undefined;
-
-var moveables: ecs.BasicGroup = undefined;
-var renderables: ecs.BasicGroup = undefined;
+var o012s = [_]*transform.O012{ &camera, &player.o012, &compass.o012 };
+var models = [_]*Model{ &player, &compass };
 
 var fov: f32 = INITIAL_FOV;
 var proj_matrix: zm.Mat4f = zm.Mat4f.perspective(std.math.degreesToRadians(INITIAL_FOV), 1.0, 0.05, 100.0);
@@ -139,49 +155,20 @@ fn init() !void {
     // Get a pointer to the keyboard state.
     keyboard_state = c.SDL_GetKeyboardState(null);
 
-    // Setup initial entities with the ECS.
-    reg = .init(ecs_arena.allocator());
+    // Create the initial models.
+    compass.meshes = try Mesh.initFromOBJLeaky(
+        model_arena.allocator(),
+        window.device,
+        @embedFile("assets/models/Compass.obj"),
+        @embedFile("assets/models/Compass.mtl"),
+    );
 
-    e_camera = reg.create();
-    reg.addTypes(e_camera, cmps.Group_Transform);
-    t_camera = reg.get(cmps.Position, e_camera);
-    v_camera = reg.get(cmps.Velocity, e_camera);
-    t_camera.* = .{ .x = .{ 0, 3, -5 }, .r = .{ 0, std.math.degreesToRadians(90), 0 } };
-
-    e_compass = reg.create();
-    reg.addTypes(e_compass, cmps.Group_Transform);
-    reg.get(cmps.Position, e_compass).* = .{ .x = .{ 0, -0.25, 0 } };
-    reg.get(cmps.Velocity, e_compass).* = .{ .vr = .{ 0, 0.25, 0 } };
-    reg.add(e_compass, cmps.Scale{ .scale = .{ 0.25, 0.25, 0.25 } });
-    reg.add(e_compass, cmps.Renderable{
-        .objects = try Object.initFromOBJLeaky(
-            model_arena.allocator(),
-            window.device,
-            @embedFile("assets/models/Compass.obj"),
-            @embedFile("assets/models/Compass.mtl"),
-        ),
-    });
-
-    e_player = reg.create();
-    reg.add(e_player, cmps.Renderable{
-        .objects = (try Object.initFromOBJLeaky(
-            model_arena.allocator(),
-            window.device,
-            @embedFile("assets/models/Player.obj"),
-            @embedFile("assets/models/Player.mtl"),
-        )),
-    });
-    reg.add(e_player, cmps.Scale{ .scale = .{ 0.5, 0.5, 0.5 } });
-    reg.addTypes(e_player, cmps.Group_Transform);
-    t_player = reg.get(cmps.Position, e_player);
-    v_player = reg.get(cmps.Velocity, e_player);
-
-    t_player.x = .{ 0, 3, 0 };
-
-    v_player.vr = .{ 1, 1, 1 };
-
-    moveables = reg.group(.{}, cmps.Group_Transform, .{});
-    renderables = reg.group(.{}, .{ cmps.Position, cmps.Renderable }, .{});
+    player.meshes = try Mesh.initFromOBJLeaky(
+        model_arena.allocator(),
+        window.device,
+        @embedFile("assets/models/Player.obj"),
+        @embedFile("assets/models/Player.mtl"),
+    );
 }
 
 fn update() !void {
@@ -201,7 +188,7 @@ fn update() !void {
 }
 
 fn pollEvents() !void {
-    v_camera.vr = .{ 0, 0, 0 };
+    camera.o1.rotation = .{ 0, 0, 0 };
 
     var event: c.SDL_Event = undefined;
     if (c.SDL_PollEvent(&event)) {
@@ -234,8 +221,8 @@ fn pollEvents() !void {
             },
             c.SDL_EVENT_MOUSE_MOTION => {
                 if (right_mouse_pressed) {
-                    v_camera.vr[1] = event.motion.xrel * PAN_SPEED;
-                    v_camera.vr[0] = -event.motion.yrel * PAN_SPEED;
+                    camera.o1.rotation[1] = event.motion.xrel * PAN_SPEED;
+                    camera.o1.rotation[0] = -event.motion.yrel * PAN_SPEED;
                 }
             },
             c.SDL_EVENT_MOUSE_WHEEL => {
@@ -257,29 +244,17 @@ fn pollEvents() !void {
     }
 
     // Free-Cam
-    v_camera.v =
-        zm.vec.scale(t_camera.right(), inputAxis(c.SDL_SCANCODE_A, c.SDL_SCANCODE_D) * MOVEMENT_SPEED) +
-        zm.vec.scale(t_camera.up(), inputAxis(c.SDL_SCANCODE_E, c.SDL_SCANCODE_Q) * MOVEMENT_SPEED) +
-        zm.vec.scale(t_camera.forward(), inputAxis(c.SDL_SCANCODE_W, c.SDL_SCANCODE_S) * MOVEMENT_SPEED);
+    camera.o1.translation =
+        zm.vec.scale(camera.o0.right(), inputAxis(c.SDL_SCANCODE_A, c.SDL_SCANCODE_D) * MOVEMENT_SPEED) +
+        zm.vec.scale(camera.o0.up(), inputAxis(c.SDL_SCANCODE_E, c.SDL_SCANCODE_Q) * MOVEMENT_SPEED) +
+        zm.vec.scale(camera.o0.forward(), inputAxis(c.SDL_SCANCODE_W, c.SDL_SCANCODE_S) * MOVEMENT_SPEED);
 }
 
 fn updateSystems(ticks: u64, dt: u64) !void {
     _ = ticks;
 
     const dt_s = @as(f32, @floatFromInt(dt)) / 1e9;
-    const dt_s3: zm.Vec3f = .{ dt_s, dt_s, dt_s };
-
-    var iter = moveables.iterator();
-    while (iter.next()) |entity| {
-        const pos = reg.get(cmps.Position, entity);
-        const vel = reg.get(cmps.Velocity, entity);
-        const acc = reg.get(cmps.Acceleration, entity);
-
-        vel.v += acc.a * dt_s3;
-        vel.vr += acc.ar * dt_s3;
-        pos.x += vel.v * dt_s3;
-        pos.r += vel.vr * dt_s3;
-    }
+    for (o012s) |o012| o012.update(dt_s);
 
     if (!c.SDL_SetWindowRelativeMouseMode(window.window, right_mouse_pressed)) sdl.err("SDL_SetWindowRelativeMouseMode");
 }
@@ -316,25 +291,13 @@ fn render(ticks: u64, dt: u64) !void {
 
     const render_pass = c.SDL_BeginGPURenderPass(cmd, &color_target_info, 1, &depth_stencil_target_info) orelse sdl.fatal("SDL_BeginGPURenderPass");
 
-    const view_matrix = zm.Mat4f.lookAt(t_camera.x, t_camera.x + t_camera.forward(), zm.vec.up(f32));
+    const view_matrix = zm.Mat4f.lookAt(camera.o0.translation, camera.o0.translation + camera.o0.forward(), zm.vec.up(f32));
 
     c.SDL_BindGPUGraphicsPipeline(render_pass, pipeline.?);
-    c.SDL_PushGPUFragmentUniformData(cmd, 1, @ptrCast(&t_camera.x), @sizeOf(zm.Vec3f));
+    c.SDL_PushGPUFragmentUniformData(cmd, 1, @ptrCast(&camera.o0.translation), @sizeOf(zm.Vec3f));
 
-    var renderables_iter = renderables.iterator();
-    while (renderables_iter.next()) |entity| {
-        const pos = reg.get(cmps.Position, entity);
-        const ren = reg.get(cmps.Renderable, entity);
-
-        var model_matrix = zm.Mat4f.translationVec3(pos.x)
-            .multiply(zm.Mat4f.rotation(zm.vec.right(f32), pos.r[0]))
-            .multiply(zm.Mat4f.rotation(zm.vec.up(f32), pos.r[1]))
-            .multiply(zm.Mat4f.rotation(zm.vec.forward(f32), pos.r[2]));
-
-        if (reg.tryGet(cmps.Scale, entity)) |scale| {
-            model_matrix = model_matrix.multiply(zm.Mat4f.scaling(scale.scale[0], scale.scale[1], scale.scale[2]));
-        }
-
+    for (models) |model| {
+        const model_matrix = model.o012.o0.modelMatrix();
         const normal = model_matrix.inverse().transpose().data;
 
         c.SDL_PushGPUFragmentUniformData(cmd, 0, @ptrCast(&normal), @sizeOf([16]f32));
@@ -344,7 +307,7 @@ fn render(ticks: u64, dt: u64) !void {
             .proj = proj_matrix.data,
         }), @sizeOf(gpu.PerFrameData));
 
-        for (ren.objects) |mesh| {
+        for (model.meshes) |mesh| {
             mesh.draw(render_pass);
         }
     }
@@ -368,10 +331,7 @@ fn exit() !void {
     c.SDL_ReleaseGPUTexture(window.device, depth_texture);
     c.SDL_ReleaseGPUGraphicsPipeline(window.device, pipeline);
 
-    var renderables_iter = renderables.iterator();
-    while (renderables_iter.next()) |entity| {
-        for (reg.get(cmps.Renderable, entity).objects) |mesh| mesh.deinit();
-    }
+    for (models) |model| for (model.meshes) |mesh| mesh.deinit();
     window.deinit();
 
     shader_arena.deinit();
@@ -439,22 +399,15 @@ fn renderDebug(cmd: *c.SDL_GPUCommandBuffer, render_pass: *c.SDL_GPURenderPass, 
     c.ImGui_SeparatorText("Performance");
     c.ImGui_Text("FPS: %-6.2f", 1e3 / frame_time_ms);
     c.ImGui_Text("Frame Time (ms): %-6.3f", frame_time_ms);
-    c.ImGui_SeparatorText("Player");
-    c.ImGui_Text("Position: (%.2f, %.2f, %.2f)", t_player.x[0], t_player.x[1], t_player.x[2]);
-    c.ImGui_Text(
-        "Rotation (deg): (%.2f, %.2f, %.2f)",
-        @mod(std.math.radiansToDegrees(t_player.r[0]), 360),
-        @mod(std.math.radiansToDegrees(t_player.r[1]), 360),
-        @mod(std.math.radiansToDegrees(t_player.r[2]), 360),
-    );
     c.ImGui_SeparatorText("Camera");
-    c.ImGui_Text("Position: (%.2f, %.2f, %.2f)", t_camera.x[0], t_camera.x[1], t_camera.x[2]);
+    c.ImGui_Text("Position: (%.2f, %.2f, %.2f)", camera.o0.translation[0], camera.o0.translation[1], camera.o0.translation[2]);
     c.ImGui_Text(
         "Rotation (deg): (%.2f, %.2f, %.2f)",
-        @mod(std.math.radiansToDegrees(t_camera.r[0]), 360),
-        @mod(std.math.radiansToDegrees(t_camera.r[1]), 360),
-        @mod(std.math.radiansToDegrees(t_camera.r[2]), 360),
+        @mod(std.math.radiansToDegrees(camera.o0.rotation[0]), 360),
+        @mod(std.math.radiansToDegrees(camera.o0.rotation[1]), 360),
+        @mod(std.math.radiansToDegrees(camera.o0.rotation[2]), 360),
     );
+    c.ImGui_Text("Velocity: (%.2f, %.2f, %.2f)", camera.o1.translation[0], camera.o1.translation[1], camera.o1.translation[2]);
     c.ImGui_Text("FoV (deg): %.2f", fov);
     c.ImGui_SeparatorText("Mouse");
     c.ImGui_Text("Right Pressed: %d", right_mouse_pressed);

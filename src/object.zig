@@ -1,11 +1,18 @@
 const std = @import("std");
+
 const zm = @import("zm");
 const obj = @import("obj");
 
+const transform = @import("transform.zig");
 const c = @import("ffi.zig").c;
 const gpu = @import("gpu.zig");
 
-pub const Object = struct {
+pub const Model = struct {
+    o012: transform.O012,
+    meshes: []Mesh,
+};
+
+pub const Mesh = struct {
     device: *c.SDL_GPUDevice,
     allocator: ?std.mem.Allocator = null,
 
