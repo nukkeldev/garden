@@ -6,7 +6,7 @@ uniform ConstantBuffer<float4x4> normalMat;
 uniform ConstantBuffer<float3> viewPosition;
 
 static float3 lightColor = float3(1.0, 1.0, 1.0);
-static float3 lightPosition = float3(0.0, 3.0, 0.0);
+static float3 lightPosition = float3(0.0, 5.0, 0.0);
 
 static float specularity = 0.5;
 
