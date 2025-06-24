@@ -3,13 +3,13 @@ const std = @import("std");
 const ffi = @import("../ffi.zig");
 const log = @import("../log.zig");
 
+const gdn = log.gdn;
+
 const c = ffi.c;
 const cstr = ffi.cstr;
 
 /// This is not a full representation of the file, just the properties we need.
 pub const ShaderLayout = struct {
-    allocator: std.mem.Allocator,
-
     entry_point_name: []const u8,
     stage: c.SDL_GPUShaderStage,
     vertex_input: ?*c.SDL_GPUVertexInputState = null,
@@ -19,129 +19,108 @@ pub const ShaderLayout = struct {
 
     const Self = @This();
 
-    pub fn parseLeaky(allocator: std.mem.Allocator, json: []const u8) ?Self {
+    pub fn parseLeaky(arena_allocator: std.mem.Allocator, json: []const u8) !Self {
         // Parse the reflection json file.
-        const parsed = std.json.parseFromSlice(std.json.Value, allocator, json, .{}) catch log.oom();
-        defer parsed.deinit();
+        const reflection = try std.json.parseFromSliceLeaky(RawReflection, arena_allocator, json, .{});
 
         var self = Self{
-            .allocator = allocator,
             .entry_point_name = undefined,
             .stage = undefined,
         };
 
         outer: { // Entry point parsing
-            const entry_points = parsed.value.object.get("entryPoints").?.array;
-            const entry_point = entry_points.getLast().object;
+            const entry_point = reflection.entryPoints[0];
 
-            self.entry_point_name = allocator.dupe(u8, entry_point.get("name").?.string) catch log.oom();
-            self.stage = inner: {
-                const raw_stage = entry_point.get("stage").?.string;
-
-                if (std.mem.eql(u8, raw_stage, "vertex")) {
-                    break :inner c.SDL_GPU_SHADERSTAGE_VERTEX;
-                } else if (std.mem.eql(u8, raw_stage, "fragment")) {
-                    break :inner c.SDL_GPU_SHADERSTAGE_FRAGMENT;
-                } else {
-                    log.gdn.err("Invalid Shader Type: {s}!", .{raw_stage});
-                    return null;
-                }
+            self.entry_point_name = entry_point.name;
+            self.stage = switch (entry_point.stage) {
+                .vertex => c.SDL_GPU_SHADERSTAGE_VERTEX,
+                .fragment => c.SDL_GPU_SHADERSTAGE_FRAGMENT,
             };
 
-            // Skip parameter parsing for fragment shaders.
-            if (self.stage == c.SDL_GPU_SHADERSTAGE_FRAGMENT) break :outer;
+            // Skip SDL_GPUVertexInputState creation for fragment shaders.
+            if (entry_point.stage == .fragment) break :outer;
 
-            // Parse the parameters for this entry point if present.
-            const parameters = entry_point.get("parameters").?.array;
-            if (parameters.items.len > 1) {
-                log.gdn.err("TODO: Shader reflection only supports a single vertex parameter!", .{});
-                return null;
+            // Parse the parameters for this entry point.
+            if (entry_point.parameters.len > 1) {
+                gdn.fatal("TODO: Only a single vertex parameter is supported currently!", .{});
             }
 
-            if (parameters.getLastOrNull()) |parameter| {
-                const fields = parameter.object.get("type").?.object.get("fields").?.array;
-                var vertex_attributes = std.ArrayList(c.SDL_GPUVertexAttribute).init(allocator);
+            const parameter = entry_point.parameters[0];
+            const fields = parameter.type.fields.?;
 
-                var offset: usize = 0;
-                for (fields.items) |field| {
-                    const vertex_attribute = vertex_attributes.addOne() catch log.oom();
+            var vertex_attributes = std.ArrayList(c.SDL_GPUVertexAttribute).init(arena_allocator);
 
-                    vertex_attribute.location = @intCast(field.object.get("binding").?.object.get("index").?.integer);
-                    vertex_attribute.offset = @intCast(offset);
+            var offset: usize = 0;
+            for (fields) |field| {
+                const vertex_attribute = vertex_attributes.addOne() catch log.oom();
 
-                    const ty = field.object.get("type").?.object;
-                    const type_kind = ty.get("kind").?.string;
+                vertex_attribute.location = @intCast(field.binding.?.index.?);
+                vertex_attribute.offset = @intCast(offset);
 
-                    const sdl_type: c.SDL_GPUVertexElementFormat, const size: usize = if (std.mem.eql(u8, type_kind, "vector")) inner: {
-                        const count: usize = @intCast(ty.get("elementCount").?.integer);
-                        const element_type = ty.get("elementType").?.object;
-                        const element_type_kind = element_type.get("kind").?.string;
+                const sdl_type: c.SDL_GPUVertexElementFormat, const size: usize = switch (field.type.kind) {
+                    .vector => inner: {
+                        const count: usize = field.type.elementCount.?;
+                        const element_type = field.type.elementType.?;
 
-                        if (std.mem.eql(u8, element_type_kind, "scalar")) {
-                            const scalar_type = element_type.get("scalarType").?.string;
-                            if (std.mem.eql(u8, scalar_type, "float32")) {
-                                const sdl_type = switch (count) {
-                                    1 => c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT,
-                                    2 => c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
-                                    3 => c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
-                                    4 => c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4,
-                                    else => unreachable,
-                                };
-                                break :inner .{ @intCast(sdl_type), @sizeOf(f32) * count };
-                            } else {
-                                log.gdn.err("TODO: Scalar type \"{s}\" not yet supported!", .{scalar_type});
-                                return null;
-                            }
-                        } else {
-                            log.gdn.err("TODO: Vector element kind \"{s}\" not yet supported!", .{element_type_kind});
-                            return null;
+                        switch (element_type.kind) {
+                            .scalar => switch (element_type.scalarType.?) {
+                                .float32 => {
+                                    const sdl_type = switch (count) {
+                                        1 => c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT,
+                                        2 => c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
+                                        3 => c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
+                                        4 => c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4,
+                                        else => unreachable,
+                                    };
+
+                                    break :inner .{ @intCast(sdl_type), @sizeOf(f32) * count };
+                                },
+                                else => @panic("AHHH"),
+                            },
+                            else => gdn.fatal("TODO: Unsupported element type: {}!", .{element_type.kind}),
                         }
-                    } else {
-                        log.gdn.err("TODO: Type kind \"{s}\" not yet supported!", .{type_kind});
-                        return null;
-                    };
-
-                    vertex_attribute.buffer_slot = 0; // TODO: Corresponds to the parameter index.
-                    vertex_attribute.format = sdl_type;
-
-                    offset += size;
-                }
-
-                const vertex_buffer_description = allocator.create(c.SDL_GPUVertexBufferDescription) catch log.oom();
-                vertex_buffer_description.* = .{
-                    .slot = 0,
-                    .pitch = @intCast(offset),
-                    .input_rate = c.SDL_GPU_VERTEXINPUTRATE_VERTEX,
-                    .instance_step_rate = 0,
+                    },
+                    else => gdn.fatal("TODO: Unsupported field type: {}!", .{field.type.kind}),
                 };
 
-                self.vertex_input = allocator.create(c.SDL_GPUVertexInputState) catch log.oom();
-                self.vertex_input.?.* = .{
-                    .num_vertex_buffers = 1,
-                    .vertex_buffer_descriptions = @ptrCast(vertex_buffer_description),
-                    .num_vertex_attributes = @intCast(vertex_attributes.items.len),
-                    .vertex_attributes = @ptrCast(allocator.dupe(c.SDL_GPUVertexAttribute, vertex_attributes.items) catch log.oom()),
-                };
-            }
-        } // Entry point parsing
+                vertex_attribute.buffer_slot = 0; // TODO: Corresponds to the parameter index.
+                vertex_attribute.format = sdl_type;
 
-        { // Paramater parsing
-            for (parsed.value.object.get("parameters").?.array.items) |param| {
-                const kind = param.object.get("type").?.object.get("kind").?.string;
-
-                if (std.mem.eql(u8, kind, "resource")) self.num_storage_buffers += 1;
-                if (std.mem.eql(u8, kind, "constantBuffer")) self.num_uniform_buffers += 1;
+                offset += size;
             }
-        } // Paramater parsing
+
+            const vertex_buffer_description = arena_allocator.create(c.SDL_GPUVertexBufferDescription) catch log.oom();
+            vertex_buffer_description.* = .{
+                .slot = 0,
+                .pitch = @intCast(offset),
+                .input_rate = c.SDL_GPU_VERTEXINPUTRATE_VERTEX,
+                .instance_step_rate = 0,
+            };
+
+            self.vertex_input = arena_allocator.create(c.SDL_GPUVertexInputState) catch log.oom();
+            self.vertex_input.?.* = .{
+                .num_vertex_buffers = 1,
+                .vertex_buffer_descriptions = @ptrCast(vertex_buffer_description),
+                .num_vertex_attributes = @intCast(vertex_attributes.items.len),
+                .vertex_attributes = @ptrCast(arena_allocator.dupe(c.SDL_GPUVertexAttribute, vertex_attributes.items) catch log.oom()),
+            };
+        }
+
+        for (reflection.parameters) |param| {
+            switch (param.type.kind) {
+                .resource => self.num_storage_buffers += 1,
+                .constantBuffer => self.num_uniform_buffers += 1,
+            }
+        }
 
         return self;
     }
 
-    pub fn createShader(self: *const Self, device: *c.SDL_GPUDevice, code: []const u8) ?*c.SDL_GPUShader {
+    pub fn createShaderLeaky(self: *const Self, allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, code: []const u8) ?*c.SDL_GPUShader {
         const shader = c.SDL_CreateGPUShader(device, &.{
-            .code = cstr(self.allocator, code) catch log.oom(),
+            .code = cstr(allocator, code) catch log.oom(),
             .code_size = code.len,
-            .entrypoint = cstr(self.allocator, self.entry_point_name) catch log.oom(),
+            .entrypoint = cstr(allocator, self.entry_point_name) catch log.oom(),
             .format = c.SDL_GPU_SHADERFORMAT_SPIRV,
             .stage = self.stage,
             .num_uniform_buffers = @intCast(self.num_uniform_buffers),
@@ -152,7 +131,8 @@ pub const ShaderLayout = struct {
         return shader;
     }
 
-    pub fn createPipeline(
+    pub fn createPipelineLeaky(
+        allocator: std.mem.Allocator,
         device: *c.SDL_GPUDevice,
         window: *c.SDL_Window,
         vertex_layout: *const Self,
@@ -161,8 +141,8 @@ pub const ShaderLayout = struct {
         fragment_code: []const u8,
         wireframe: bool,
     ) ?*c.SDL_GPUGraphicsPipeline {
-        const vertex_shader = vertex_layout.createShader(device, vertex_code) orelse return null;
-        const fragment_shader = fragment_layout.createShader(device, fragment_code) orelse return null;
+        const vertex_shader = vertex_layout.createShaderLeaky(allocator, device, vertex_code) orelse return null;
+        const fragment_shader = fragment_layout.createShaderLeaky(allocator, device, fragment_code) orelse return null;
 
         const pipeline = c.SDL_CreateGPUGraphicsPipeline(device, &.{
             .vertex_shader = vertex_shader,
@@ -200,8 +180,145 @@ pub const ShaderLayout = struct {
     }
 };
 
-test {
+test "shader layout creation" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    _ = ShaderLayout.parseLeaky(arena.allocator(), @embedFile("../assets/shaders/compiled/shader.vert.layout")).?;
+
+    const vertexLayoutSource = @embedFile("../assets/shaders/compiled/vertex.layout");
+    const fragmentLayoutSource = @embedFile("../assets/shaders/compiled/fragment.layout");
+
+    _ = try ShaderLayout.parseLeaky(arena.allocator(), vertexLayoutSource);
+    _ = try ShaderLayout.parseLeaky(arena.allocator(), fragmentLayoutSource);
+}
+
+/// NOTE: This is not a complete definition of the result of Slang's reflection json,
+/// NOTE: only what I have been exposed to with my shaders.
+pub const RawReflection = struct {
+    parameters: []Parameter,
+    entryPoints: []EntryPoint,
+
+    pub const Parameter = struct {
+        name: []const u8,
+        binding: Binding,
+        type: Type,
+    };
+
+    pub const Binding = struct {
+        kind: BindingKind,
+
+        // Descriptor Table Slot
+        space: ?usize = null,
+        index: ?usize = null, // Descriptor Table Slot & Varying Input
+        used: ?usize = null,
+
+        // Uniform
+        offset: ?usize = null,
+        size: ?usize = null,
+
+        // Varying Input/Output
+        count: ?usize = null,
+
+        pub const BindingKind = enum { descriptorTableSlot, uniform, varyingInput, varyingOutput };
+    };
+
+    pub const Type = struct {
+        kind: TypeKind,
+
+        // Constant Buffer
+        elementType: ?ElementType = null,
+        containerVarLayout: ?ContainerVarLayout = null,
+        elementVarLayout: ?ElementVarLayout = null,
+
+        // Resource
+        baseShape: ?TypeResourceBaseShape = null,
+        resultType: ?*ElementType = null,
+
+        pub const TypeKind = enum { constantBuffer, resource };
+        pub const ElementType = struct {
+            kind: ElementTypeKind,
+            name: ?[]const u8 = null,
+
+            // Struct
+            fields: ?[]ElementTypeStructField = null,
+            // Scalar
+            scalarType: ?ElementTypeScalarType = null,
+            // Matrix
+            rowCount: ?usize = null,
+            columnCount: ?usize = null,
+            // Vector
+            elementCount: ?usize = null,
+
+            elementType: ?*ElementType = null,
+
+            pub const ElementTypeKind = enum { @"struct", scalar, matrix, vector };
+            pub const ElementTypeScalarType = enum { float32, uint32 };
+            pub const ElementTypeStructField = struct {
+                name: []const u8,
+                type: *ElementType,
+                stage: ?EntryPoint.EntryPointStage = null,
+                binding: ?Binding = null,
+                semanticName: ?[]const u8 = null,
+                semanticIndex: ?usize = null,
+            };
+        };
+        pub const ContainerVarLayout = struct { binding: Binding };
+        pub const ElementVarLayout = struct {
+            type: ElementType,
+            binding: Binding,
+        };
+        pub const TypeResourceBaseShape = enum {
+            structuredBuffer,
+        };
+    };
+
+    pub const EntryPoint = struct {
+        name: []const u8,
+        stage: EntryPointStage,
+        parameters: []EntryPointParamater,
+        result: EntryPointResult,
+        bindings: []EntryPointBinding,
+
+        pub const EntryPointStage = enum {
+            vertex,
+            fragment,
+        };
+        pub const EntryPointParamater = struct {
+            name: []const u8,
+            semanticName: ?[]const u8 = null,
+            stage: ?EntryPointStage = null,
+            binding: ?Binding = null,
+            type: Type.ElementType,
+        };
+        pub const EntryPointResult = struct {
+            stage: EntryPointStage,
+            semanticName: ?[]const u8 = null,
+            binding: Binding,
+            type: Type.ElementType,
+        };
+        pub const EntryPointBinding = struct {
+            name: []const u8,
+            binding: Binding,
+        };
+    };
+};
+
+test "slang reflection layout parsing" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const vertexLayoutSource = @embedFile("../assets/shaders/compiled/vertex.layout");
+    const fragmentLayoutSource = @embedFile("../assets/shaders/compiled/fragment.layout");
+
+    _ = try std.json.parseFromSliceLeaky(
+        RawReflection,
+        arena.allocator(),
+        vertexLayoutSource,
+        .{ .ignore_unknown_fields = false },
+    );
+    _ = try std.json.parseFromSliceLeaky(
+        RawReflection,
+        arena.allocator(),
+        fragmentLayoutSource,
+        .{ .ignore_unknown_fields = false },
+    );
 }

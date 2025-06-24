@@ -376,10 +376,10 @@ fn load_pipeline(recompile: bool) !void {
         };
     }
 
-    const vertex_layout = gpu.slang.ShaderLayout.parseLeaky(shader_arena.allocator(), compiled_vertex_shader.layout).?;
-    const fragment_layout = gpu.slang.ShaderLayout.parseLeaky(shader_arena.allocator(), compiled_fragment_shader.layout).?;
+    const vertex_layout = try gpu.slang.ShaderLayout.parseLeaky(shader_arena.allocator(), compiled_vertex_shader.layout);
+    const fragment_layout = try gpu.slang.ShaderLayout.parseLeaky(shader_arena.allocator(), compiled_fragment_shader.layout);
 
-    pipeline = gpu.slang.ShaderLayout.createPipeline(window.device, window.window, &vertex_layout, &fragment_layout, compiled_vertex_shader.spv, compiled_fragment_shader.spv, wireframe).?;
+    pipeline = gpu.slang.ShaderLayout.createPipelineLeaky(shader_arena.allocator(), window.device, window.window, &vertex_layout, &fragment_layout, compiled_vertex_shader.spv, compiled_fragment_shader.spv, wireframe).?;
 
     if (recompile) gdn.info("Compiled and reloaded shaders!", .{});
 }
