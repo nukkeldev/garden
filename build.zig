@@ -95,7 +95,6 @@ fn buildShaders(b: *std.Build) !*std.Build.Step {
         .name = "compile shaders",
         .owner = b,
     });
-    step.result_cached = false;
 
     const mkdir = b.addSystemCommand(&.{ "mkdir", "-p" });
     mkdir.addDirectoryArg(b.path("src/assets/shaders/compiled"));

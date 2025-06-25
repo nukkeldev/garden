@@ -67,9 +67,9 @@ pub const Mesh = struct {
                 .vertex_data = vertices,
                 .index_data = indices,
                 .fragment_normals_data = fragment_normals_data,
-                .vertex_buffer = gpu.initBuffer(gpu.VertexInput, @intCast(vertices.len), vertices, device, c.SDL_GPU_BUFFERUSAGE_VERTEX),
-                .index_buffer = gpu.initBuffer(u32, @intCast(indices.len), indices, device, c.SDL_GPU_BUFFERUSAGE_INDEX),
-                .fragment_normals_buffer = gpu.initBuffer([4]f32, @intCast(fragment_normals_data.len), fragment_normals_data, device, c.SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ),
+                .vertex_buffer = try gpu.initBuffer(gpu.VertexInput, @intCast(vertices.len), vertices, device, c.SDL_GPU_BUFFERUSAGE_VERTEX),
+                .index_buffer = try gpu.initBuffer(u32, @intCast(indices.len), indices, device, c.SDL_GPU_BUFFERUSAGE_INDEX),
+                .fragment_normals_buffer = try gpu.initBuffer([4]f32, @intCast(fragment_normals_data.len), fragment_normals_data, device, c.SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ),
             };
         }
 

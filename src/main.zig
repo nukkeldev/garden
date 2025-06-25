@@ -9,13 +9,13 @@ const transform = @import("transform.zig");
 
 const Model = @import("object.zig").Model;
 const Mesh = @import("object.zig").Mesh;
-const Window = @import("window.zig").Window;
 
 const gdn = log.gdn;
 const sdl = log.sdl;
 const gui = log.gui;
 
 const c = ffi.c;
+const SDL = ffi.SDL;
 const cstr = ffi.cstr;
 
 pub const std_options: std.Options = .{ .log_level = .debug };
@@ -47,7 +47,9 @@ var model_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
 var debug_allocator = std.heap.DebugAllocator(.{}).init;
 
-var window: Window = undefined;
+var window: SDL.Window = undefined;
+var device: SDL.GPUDevice = undefined;
+
 var im_context: *c.ImGuiContext = undefined;
 
 var pipeline: ?*c.SDL_GPUGraphicsPipeline = null;
@@ -93,41 +95,48 @@ var debug = true;
 var wireframe = false;
 
 var right_mouse_pressed: bool = false;
+var mouse_delta_x: f32 = 0;
+var mouse_delta_y: f32 = 0;
 var keyboard_state: [*c]const bool = undefined;
 
 // Functions
 
 fn init() !void {
-    c.SDL_SetMainReady();
-
     // Initialize SDL.
-    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) sdl.fatal("SDL_Init(c.SDL_INIT_VIDEO)");
+    try SDL.initialize(c.SDL_INIT_VIDEO);
 
-    // Create the window.
-    window = Window.init(
+    // Create the window and device.
+    window = try SDL.Window.create(debug_allocator.allocator(), "Garden Demo", 1024, 1024, WINDOW_FLAGS);
+    try window.show();
+
+    device = try SDL.GPUDevice.createAndClaimForWindow(
         debug_allocator.allocator(),
-        .{
-            .name = "Garden Demo",
-            .initial_size = .{ 1024, 1024 },
-        },
-        .{
-            .close_window = &should_exit,
-        },
-    ) catch |e| gdn.fatal("Failed to create window: {}!", .{e});
+        c.SDL_GPU_SHADERFORMAT_SPIRV,
+        false,
+        null,
+        &window,
+    );
+    try device.setSwapchainParameters(&window, .{ .present_mode = .MAILBOX });
+    try device.setAllowedFramesInFlight(3);
 
-    depth_texture = c.SDL_CreateGPUTexture(window.device, &.{
+    // Create the depth texture.
+    const px_size = try window.getSizeInPixels();
+    depth_texture = try device.createTexture(.{
         .type = c.SDL_GPU_TEXTURETYPE_2D,
-        .width = window.size[0],
-        .height = window.size[1],
+        .width = px_size[0],
+        .height = px_size[1],
         .layer_count_or_depth = 1,
         .num_levels = 1,
         .sample_count = c.SDL_GPU_SAMPLECOUNT_1,
         .format = c.SDL_GPU_TEXTUREFORMAT_D16_UNORM,
         .usage = c.SDL_GPU_TEXTUREUSAGE_SAMPLER | c.SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET,
-    }) orelse sdl.fatal("SDL_CreateGPUTexture");
+    });
 
     // Create an ImGui context.
-    im_context = c.ImGui_CreateContext(null) orelse gui.fatal("igCreateContext");
+    im_context = c.ImGui_CreateContext(null) orelse {
+        gui.err("Failed to create ImGui context!", .{});
+        return error.ImGuiError;
+    };
 
     const io = c.ImGui_GetIO();
     io.*.ConfigFlags |= c.ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
@@ -135,19 +144,24 @@ fn init() !void {
     // Configure ImGui styling.
     const style = c.ImGui_GetStyle();
     c.ImGui_StyleColorsDark(style);
-    c.ImGuiStyle_ScaleAllSizes(style, window.content_scale);
 
     // Setup ImGui rendering.
-    if (!c.cImGui_ImplSDL3_InitForSDLGPU(window.window)) gui.fatal("cImGui_ImplSDL3_InitForSDLGPU");
+    if (!c.cImGui_ImplSDL3_InitForSDLGPU(window.handle)) {
+        gui.err("Failed to initialize SDL3's implementation for SDLGPU!", .{});
+        return error.ImGuiError;
+    }
     var imgui_init = c.ImGui_ImplSDLGPU3_InitInfo{
-        .Device = window.device,
-        .ColorTargetFormat = window.getSwapchainTextureFormat(),
+        .Device = device.handle,
+        .ColorTargetFormat = try device.getSwapchainTextureFormat(&window),
         .MSAASamples = c.SDL_GPU_SAMPLECOUNT_1,
     };
-    if (!c.cImGui_ImplSDLGPU3_Init(&imgui_init)) gui.fatal("cImGui_ImplSDLGPU3_Init");
+    if (!c.cImGui_ImplSDLGPU3_Init(&imgui_init)) {
+        gui.err("Failed to initialize SDLGPU3!", .{});
+        return error.ImGuiError;
+    }
 
     // Create the rendering pipeline.
-    try load_pipeline(false);
+    try loadPipeline(false);
 
     // Set the start time.
     last_update_ns = c.SDL_GetTicksNS();
@@ -158,14 +172,14 @@ fn init() !void {
     // Create the initial models.
     compass.meshes = try Mesh.initFromOBJLeaky(
         model_arena.allocator(),
-        window.device,
+        device.handle,
         @embedFile("assets/models/Compass.obj"),
         @embedFile("assets/models/Compass.mtl"),
     );
 
     player.meshes = try Mesh.initFromOBJLeaky(
         model_arena.allocator(),
-        window.device,
+        device.handle,
         @embedFile("assets/models/Player.obj"),
         @embedFile("assets/models/Player.mtl"),
     );
@@ -189,6 +203,8 @@ fn update() !void {
 
 fn pollEvents() !void {
     camera.o1.rotation = .{ 0, 0, 0 };
+    mouse_delta_x = 0;
+    mouse_delta_y = 0;
 
     var event: c.SDL_Event = undefined;
     if (c.SDL_PollEvent(&event)) {
@@ -199,10 +215,10 @@ fn pollEvents() !void {
                     // General
                     c.SDL_SCANCODE_ESCAPE => should_exit = true,
                     // Debug
-                    c.SDL_SCANCODE_R => if (event.key.mod & c.SDL_KMOD_LCTRL != 0) try load_pipeline(true),
+                    c.SDL_SCANCODE_R => if (event.key.mod & c.SDL_KMOD_LCTRL != 0) try loadPipeline(true),
                     c.SDL_SCANCODE_F => {
                         wireframe = true;
-                        try load_pipeline(false);
+                        try loadPipeline(false);
                     },
                     c.SDL_SCANCODE_GRAVE => {
                         debug = !debug;
@@ -214,15 +230,17 @@ fn pollEvents() !void {
                 switch (event.key.scancode) {
                     c.SDL_SCANCODE_F => {
                         wireframe = false;
-                        try load_pipeline(false);
+                        try loadPipeline(false);
                     },
                     else => {},
                 }
             },
             c.SDL_EVENT_MOUSE_MOTION => {
                 if (right_mouse_pressed) {
-                    camera.o1.rotation[1] = event.motion.xrel * PAN_SPEED;
-                    camera.o1.rotation[0] = -event.motion.yrel * PAN_SPEED;
+                    mouse_delta_x = event.motion.xrel;
+                    mouse_delta_y = -event.motion.yrel;
+                    camera.o1.rotation[1] = mouse_delta_x * PAN_SPEED;
+                    camera.o1.rotation[0] = mouse_delta_y * PAN_SPEED;
                 }
             },
             c.SDL_EVENT_MOUSE_WHEEL => {
@@ -238,6 +256,10 @@ fn pollEvents() !void {
             c.SDL_EVENT_WINDOW_MOUSE_LEAVE => {
                 right_mouse_pressed = false;
             },
+            c.SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED => {
+                // TODO: While not currently an issue, we should make sure to update all textures to the proper size.
+                _ = try window.syncSizeToDisplayScale();
+            },
             c.SDL_EVENT_QUIT => should_exit = true,
             else => {},
         }
@@ -246,7 +268,7 @@ fn pollEvents() !void {
     // Free-Cam
     camera.o1.translation =
         zm.vec.scale(camera.o0.right(), inputAxis(c.SDL_SCANCODE_A, c.SDL_SCANCODE_D) * MOVEMENT_SPEED) +
-        zm.vec.scale(camera.o0.up(), inputAxis(c.SDL_SCANCODE_E, c.SDL_SCANCODE_Q) * MOVEMENT_SPEED) +
+        zm.vec.scale(zm.vec.up(f32), inputAxis(c.SDL_SCANCODE_E, c.SDL_SCANCODE_Q) * MOVEMENT_SPEED) +
         zm.vec.scale(camera.o0.forward(), inputAxis(c.SDL_SCANCODE_W, c.SDL_SCANCODE_S) * MOVEMENT_SPEED);
 }
 
@@ -256,15 +278,15 @@ fn updateSystems(ticks: u64, dt: u64) !void {
     const dt_s = @as(f32, @floatFromInt(dt)) / 1e9;
     for (o012s) |o012| o012.update(dt_s);
 
-    if (!c.SDL_SetWindowRelativeMouseMode(window.window, right_mouse_pressed)) sdl.err("SDL_SetWindowRelativeMouseMode");
+    if (!c.SDL_SetWindowRelativeMouseMode(window.handle, right_mouse_pressed)) SDL.err("SetWindowRelativeMouseMode", "", .{});
 }
 
 fn render(ticks: u64, dt: u64) !void {
     _ = ticks;
     const frame_time_ms = @as(f32, @floatFromInt(dt)) / 1e6;
 
-    const cmd = try window.acquireCommandBuffer();
-    const swapchain_texture: ?*c.SDL_GPUTexture = try window.waitAndAcquireGPUSwapchainTexture(cmd);
+    const cmd = try device.acquireCommandBuffer();
+    const swapchain_texture: ?*c.SDL_GPUTexture = try cmd.waitAndAcquireSwapchainTexture(&window);
     if (swapchain_texture == null) return;
 
     const tex = swapchain_texture.?;
@@ -289,50 +311,49 @@ fn render(ticks: u64, dt: u64) !void {
         .stencil_store_op = c.SDL_GPU_STOREOP_STORE,
     };
 
-    const render_pass = c.SDL_BeginGPURenderPass(cmd, &color_target_info, 1, &depth_stencil_target_info) orelse sdl.fatal("SDL_BeginGPURenderPass");
+    const rpass = try cmd.beginRenderPass(&.{color_target_info}, depth_stencil_target_info);
 
     const view_matrix = zm.Mat4f.lookAt(camera.o0.translation, camera.o0.translation + camera.o0.forward(), zm.vec.up(f32));
 
-    c.SDL_BindGPUGraphicsPipeline(render_pass, pipeline.?);
-    c.SDL_PushGPUFragmentUniformData(cmd, 1, @ptrCast(&camera.o0.translation), @sizeOf(zm.Vec3f));
+    rpass.bindGraphicsPipeline(pipeline.?);
+    cmd.pushFragmentUniformData(zm.Vec3f, 1, &camera.o0.translation);
 
     for (models) |model| {
         const model_matrix = model.o012.o0.modelMatrix();
         const normal = model_matrix.inverse().transpose().data;
 
-        c.SDL_PushGPUFragmentUniformData(cmd, 0, @ptrCast(&normal), @sizeOf([16]f32));
-        c.SDL_PushGPUVertexUniformData(cmd, 0, @ptrCast(&gpu.PerFrameData{
+        cmd.pushFragmentUniformData([16]f32, 0, &normal);
+        cmd.pushVertexUniformData(gpu.PerFrameData, 0, &gpu.PerFrameData{
             .model = model_matrix.data,
             .view = view_matrix.data,
             .proj = proj_matrix.data,
-        }), @sizeOf(gpu.PerFrameData));
+        });
 
         for (model.meshes) |mesh| {
-            mesh.draw(render_pass);
+            mesh.draw(rpass.handle);
         }
     }
 
     // ImGui Rendering
-    if (debug) renderDebug(cmd, render_pass, frame_time_ms);
+    if (debug) renderDebug(&cmd, &rpass, frame_time_ms);
 
     // Submit the render pass.
-    c.SDL_EndGPURenderPass(render_pass);
-
-    if (!c.SDL_SubmitGPUCommandBuffer(cmd)) sdl.fatal("SDL_SubmitGPUCommandBuffer");
+    rpass.end();
+    try cmd.submit();
 }
 
 fn exit() !void {
-    _ = c.SDL_WaitForGPUIdle(window.device);
+    try device.waitForIdle();
 
     c.cImGui_ImplSDLGPU3_Shutdown();
     c.cImGui_ImplSDL3_Shutdown();
     c.ImGui_DestroyContext(null);
 
-    c.SDL_ReleaseGPUTexture(window.device, depth_texture);
-    c.SDL_ReleaseGPUGraphicsPipeline(window.device, pipeline);
+    c.SDL_ReleaseGPUTexture(device.handle, depth_texture);
+    c.SDL_ReleaseGPUGraphicsPipeline(device.handle, pipeline);
 
     for (models) |model| for (model.meshes) |mesh| mesh.deinit();
-    window.deinit();
+    try window.destroy();
 
     shader_arena.deinit();
     ecs_arena.deinit();
@@ -341,8 +362,8 @@ fn exit() !void {
     c.SDL_Quit();
 }
 
-fn load_pipeline(recompile: bool) !void {
-    if (pipeline != null) c.SDL_ReleaseGPUGraphicsPipeline(window.device, pipeline);
+fn loadPipeline(recompile: bool) !void {
+    if (pipeline != null) c.SDL_ReleaseGPUGraphicsPipeline(device.handle, pipeline);
 
     var compiled_vertex_shader: gpu.compile.CompiledShader = undefined;
     var compiled_fragment_shader: gpu.compile.CompiledShader = undefined;
@@ -379,12 +400,12 @@ fn load_pipeline(recompile: bool) !void {
     const vertex_layout = try gpu.slang.ShaderLayout.parseLeaky(shader_arena.allocator(), compiled_vertex_shader.layout);
     const fragment_layout = try gpu.slang.ShaderLayout.parseLeaky(shader_arena.allocator(), compiled_fragment_shader.layout);
 
-    pipeline = gpu.slang.ShaderLayout.createPipelineLeaky(shader_arena.allocator(), window.device, window.window, &vertex_layout, &fragment_layout, compiled_vertex_shader.spv, compiled_fragment_shader.spv, wireframe).?;
+    pipeline = gpu.slang.ShaderLayout.createPipelineLeaky(shader_arena.allocator(), device.handle, window.handle, &vertex_layout, &fragment_layout, compiled_vertex_shader.spv, compiled_fragment_shader.spv, wireframe).?;
 
     if (recompile) gdn.info("Compiled and reloaded shaders!", .{});
 }
 
-fn renderDebug(cmd: *c.SDL_GPUCommandBuffer, render_pass: *c.SDL_GPURenderPass, frame_time_ms: f32) void {
+fn renderDebug(cmd: *const SDL.GPUCommandBuffer, rpass: *const SDL.GPURenderPass, frame_time_ms: f32) void {
     // Begin a new ImGui frame.
     c.cImGui_ImplSDLGPU3_NewFrame();
     c.cImGui_ImplSDL3_NewFrame();
@@ -411,13 +432,14 @@ fn renderDebug(cmd: *c.SDL_GPUCommandBuffer, render_pass: *c.SDL_GPURenderPass, 
     c.ImGui_Text("FoV (deg): %.2f", fov);
     c.ImGui_SeparatorText("Mouse");
     c.ImGui_Text("Right Pressed: %d", right_mouse_pressed);
+    c.ImGui_Text("Delta: (%.2f, %.2f)", mouse_delta_x, mouse_delta_y);
     c.ImGui_End();
 
     // Render ImGui, prepare the draw data and submit the draw calls.
     c.ImGui_Render();
     const draw_data: *c.ImDrawData = c.ImGui_GetDrawData();
-    c.cImgui_ImplSDLGPU3_PrepareDrawData(draw_data, cmd);
-    c.cImGui_ImplSDLGPU3_RenderDrawData(draw_data, cmd, render_pass);
+    c.cImgui_ImplSDLGPU3_PrepareDrawData(draw_data, cmd.handle);
+    c.cImGui_ImplSDLGPU3_RenderDrawData(draw_data, cmd.handle, rpass.handle);
 }
 
 // Main
@@ -428,8 +450,8 @@ pub fn main() void {
 }
 
 fn sdlMainWrapper(_: c_int, _: [*c][*c]u8) callconv(.c) c_int {
-    sdlMain() catch |e| gdn.fatal("Fatal Error: {}", .{e});
-    return 1;
+    sdlMain() catch |e| gdn.err("Fatal Error: {}", .{e});
+    return 0;
 }
 
 pub fn sdlMain() !void {

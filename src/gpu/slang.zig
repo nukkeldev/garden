@@ -6,7 +6,8 @@ const log = @import("../log.zig");
 const gdn = log.gdn;
 
 const c = ffi.c;
-const cstr = ffi.cstr;
+const SDL = ffi.SDL;
+const cstr = ffi.CStr;
 
 /// This is not a full representation of the file, just the properties we need.
 pub const ShaderLayout = struct {
@@ -42,7 +43,8 @@ pub const ShaderLayout = struct {
 
             // Parse the parameters for this entry point.
             if (entry_point.parameters.len > 1) {
-                gdn.fatal("TODO: Only a single vertex parameter is supported currently!", .{});
+                gdn.err("TODO: Only a single vertex parameter is supported currently!", .{});
+                return error.InvalidFormat;
             }
 
             const parameter = entry_point.parameters[0];
@@ -77,10 +79,16 @@ pub const ShaderLayout = struct {
                                 },
                                 else => @panic("AHHH"),
                             },
-                            else => gdn.fatal("TODO: Unsupported element type: {}!", .{element_type.kind}),
+                            else => {
+                                gdn.err("TODO: Unsupported element type: {}!", .{element_type.kind});
+                                return error.InvalidError;
+                            },
                         }
                     },
-                    else => gdn.fatal("TODO: Unsupported field type: {}!", .{field.type.kind}),
+                    else => {
+                        gdn.err("TODO: Unsupported field type: {}!", .{field.type.kind});
+                        return error.InvalidError;
+                    },
                 };
 
                 vertex_attribute.buffer_slot = 0; // TODO: Corresponds to the parameter index.
@@ -126,7 +134,7 @@ pub const ShaderLayout = struct {
             .num_uniform_buffers = @intCast(self.num_uniform_buffers),
             .num_storage_buffers = @intCast(self.num_storage_buffers),
         });
-        if (shader == null) log.sdl.err("SDL_CreateGPUShader");
+        if (shader == null) SDL.err("SDL_CreateGPUShader", "", .{});
 
         return shader;
     }
@@ -171,7 +179,7 @@ pub const ShaderLayout = struct {
                 .front_face = c.SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE,
             },
         });
-        if (pipeline == null) log.sdl.err("SDL_CreateGPUGraphicsPipeline");
+        if (pipeline == null) SDL.err("SDL_CreateGPUGraphicsPipeline", "", .{});
 
         c.SDL_ReleaseGPUShader(device, vertex_shader);
         c.SDL_ReleaseGPUShader(device, fragment_shader);
