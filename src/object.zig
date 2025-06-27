@@ -7,6 +7,8 @@ const transform = @import("transform.zig");
 const c = @import("ffi.zig").c;
 const gpu = @import("gpu.zig");
 
+const log = @import("log.zig");
+
 pub const Model = struct {
     o012: transform.O012,
     meshes: []Mesh,
@@ -14,12 +16,15 @@ pub const Model = struct {
 
 pub const Mesh = struct {
     device: *c.SDL_GPUDevice,
-    allocator: ?std.mem.Allocator = null,
+
+    name: []const u8,
 
     vertex_data: []const gpu.VertexInput,
     index_data: ?[]const u32 = null,
     // SSBOs apparently require a 16-byte alignment.
     fragment_normals_data: []const [4]f32,
+
+    use_flat_shading: bool = true,
 
     vertex_buffer: *c.SDL_GPUBuffer,
     index_buffer: *c.SDL_GPUBuffer,
@@ -40,6 +45,7 @@ pub const Mesh = struct {
         for (0..model_verticies.len) |i| {
             model_verticies[i] = .{
                 .position = .{ model.vertices[i * 3], model.vertices[i * 3 + 1], model.vertices[i * 3 + 2] },
+                .normal = undefined,
                 .color = .{ 1, 1, 1 },
             };
         }
@@ -50,6 +56,13 @@ pub const Mesh = struct {
 
             for (mesh.indices, 0..) |index, j| {
                 const k: usize = @intCast(index.vertex.?);
+
+                if (index.normal) |n| vertices[k].normal = [_]f32{
+                    model.normals[n * 3],
+                    model.normals[n * 3 + 1],
+                    model.normals[n * 3 + 2],
+                };
+
                 if (material_data) |m| {
                     for (mesh.materials) |mat| if (j >= mat.start_index and j <= mat.end_index) {
                         const material = m.materials.get(mat.material).?;
@@ -64,13 +77,35 @@ pub const Mesh = struct {
 
             objects[i] = .{
                 .device = device,
+                .name = try allocator.dupe(u8, mesh.name orelse {
+                    log.gdn.err("Meshes must be named!", .{});
+                    return error.MeshesMustBeNamed;
+                }),
                 .vertex_data = vertices,
                 .index_data = indices,
                 .fragment_normals_data = fragment_normals_data,
-                .vertex_buffer = try gpu.initBuffer(gpu.VertexInput, @intCast(vertices.len), vertices, device, c.SDL_GPU_BUFFERUSAGE_VERTEX),
+                .vertex_buffer = try gpu.initBuffer(
+                    gpu.VertexInput,
+                    @intCast(vertices.len),
+                    vertices,
+                    device,
+                    c.SDL_GPU_BUFFERUSAGE_VERTEX,
+                ),
                 .index_buffer = try gpu.initBuffer(u32, @intCast(indices.len), indices, device, c.SDL_GPU_BUFFERUSAGE_INDEX),
-                .fragment_normals_buffer = try gpu.initBuffer([4]f32, @intCast(fragment_normals_data.len), fragment_normals_data, device, c.SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ),
+                .fragment_normals_buffer = try gpu.initBuffer(
+                    [4]f32,
+                    @intCast(fragment_normals_data.len),
+                    fragment_normals_data,
+                    device,
+                    c.SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
+                ),
             };
+
+            log.gdn.debug("Loaded mesh '{s}' with {} verticies and {} indices.", .{
+                objects[i].name,
+                vertices.len,
+                indices.len,
+            });
         }
 
         return objects;

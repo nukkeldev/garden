@@ -81,9 +81,13 @@ var compass: Model = .{
         .o1 = .{ .rotation = .{ 0, 0.25, 0 } },
     },
 };
+var sphere: Model = .{
+    .meshes = undefined,
+    .o012 = .{ .o0 = .{ .translation = .{ 0, 10, 10 } } },
+};
 
-var o012s = [_]*transform.O012{ &camera, &player.o012, &compass.o012 };
-var models = [_]*Model{ &player, &compass };
+var o012s = [_]*transform.O012{ &camera, &player.o012, &compass.o012, &sphere.o012 };
+var models = [_]*Model{ &player, &compass, &sphere };
 
 var fov: f32 = INITIAL_FOV;
 var proj_matrix: zm.Mat4f = zm.Mat4f.perspective(std.math.degreesToRadians(INITIAL_FOV), 1.0, 0.05, 100.0);
@@ -107,6 +111,7 @@ fn init() !void {
 
     // Create the window and device.
     window = try SDL.Window.create(debug_allocator.allocator(), "Garden Demo", 1024, 1024, WINDOW_FLAGS);
+    try window.setPosition(c.SDL_WINDOWPOS_CENTERED, c.SDL_WINDOWPOS_CENTERED);
     try window.show();
 
     device = try SDL.GPUDevice.createAndClaimForWindow(
@@ -183,6 +188,19 @@ fn init() !void {
         @embedFile("assets/models/Player.obj"),
         @embedFile("assets/models/Player.mtl"),
     );
+    for (0..player.meshes.len) |i| {
+        if (std.mem.eql(u8, player.meshes[i].name, "Sphere")) {
+            player.meshes[i].use_flat_shading = false;
+        }
+    }
+
+    sphere.meshes = try Mesh.initFromOBJLeaky(
+        model_arena.allocator(),
+        device.handle,
+        @embedFile("assets/models/Sphere.obj"),
+        @embedFile("assets/models/Sphere.mtl"),
+    );
+    sphere.meshes[0].use_flat_shading = false;
 }
 
 fn update() !void {
@@ -323,6 +341,7 @@ fn render(ticks: u64, dt: u64) !void {
         const normal = model_matrix.inverse().transpose().data;
 
         cmd.pushFragmentUniformData([16]f32, 0, &normal);
+        cmd.pushVertexUniformData([16]f32, 1, &normal);
         cmd.pushVertexUniformData(gpu.PerFrameData, 0, &gpu.PerFrameData{
             .model = model_matrix.data,
             .view = view_matrix.data,
@@ -330,6 +349,7 @@ fn render(ticks: u64, dt: u64) !void {
         });
 
         for (model.meshes) |mesh| {
+            cmd.pushFragmentUniformData(u32, 2, &@as(u32, @intFromBool(mesh.use_flat_shading)));
             mesh.draw(rpass.handle);
         }
     }
@@ -444,17 +464,9 @@ fn renderDebug(cmd: *const SDL.GPUCommandBuffer, rpass: *const SDL.GPURenderPass
 
 // Main
 
-pub fn main() void {
-    const args: []const []const u8 = &.{};
-    _ = c.SDL_RunApp(@intCast(args.len), @ptrCast(@constCast(&args)), &sdlMainWrapper, null);
-}
+var err: ?anyerror = null;
 
-fn sdlMainWrapper(_: c_int, _: [*c][*c]u8) callconv(.c) c_int {
-    sdlMain() catch |e| gdn.err("Fatal Error: {}", .{e});
-    return 0;
-}
-
-pub fn sdlMain() !void {
+pub fn main() !void {
     try init();
     while (!should_exit) try update();
     try exit();

@@ -4,6 +4,8 @@ StructuredBuffer<float4> fragmentNormals;
 uniform ConstantBuffer<float4x4> normalMat;
 [[vk::binding(1, 3)]]
 uniform ConstantBuffer<float3> viewPosition;
+[[vk::binding(2, 3)]]
+uniform ConstantBuffer<bool> isFlatShading;
 
 static float3 lightColor = float3(1.0, 1.0, 1.0);
 static float3 lightPosition = float3(0.0, 5.0, 0.0);
@@ -14,6 +16,7 @@ static float specularity = 0.5;
 struct VertexOutput
 {
     float3 fragmentPosition;
+    float3 normalDirection;
     float3 color;
 };
 
@@ -34,7 +37,16 @@ Fragment fragmentMain(
     float3 ambient = ambientStrength * lightColor;
 
     // Diffuse
-    float3 norm = normalize(mul(normalMat, fragmentNormals[fragmentID]).xyz);
+    float3 norm;
+    if (isFlatShading)
+    {
+        norm = normalize(mul(normalMat, fragmentNormals[fragmentID]).xyz);
+    }
+    else
+    {
+        norm = input.normalDirection;
+    }
+
     float3 lightDirection = normalize(lightPosition - input.fragmentPosition);
     float diff = max(0.0, dot(norm, lightDirection));
     float3 diffuse = diff * lightColor;
