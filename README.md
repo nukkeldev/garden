@@ -10,5 +10,16 @@ A performance-focused multi-media engine.
         - [x] Shader reflection for pipeline creation
         - [x] Online shader reloading
     - [x] `imgui`
-- [ ] Engine Architecture
-- [ ] Debug Tool for Runtime Modification of Arbitrary Data Structures
+- [?] Engine Architecture
+- [ ] Lighting
+  - [ ] Renderable Lights
+  - [ ] Reflectance Models
+    - [x] Phong
+    - [ ] Blinn-Phong
+  - [x] Normal Interpolation
+    - [x] Surface
+    - [x] Pixel
+- [ ] Materials
+  - [x] Diffuse Color
+  - [ ] Everything else
+- [ ] Textures 
