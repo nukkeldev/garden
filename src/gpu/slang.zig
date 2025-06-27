@@ -77,17 +77,25 @@ pub const ShaderLayout = struct {
 
                                     break :inner .{ @intCast(sdl_type), @sizeOf(f32) * count };
                                 },
-                                else => @panic("AHHH"),
+                                else => {
+                                    gdn.err("TODO: Unsupported element scalar type: {s}!", .{@tagName(element_type.scalarType.?)});
+                                    return error.UnsupportedElementScalarType;
+                                },
                             },
                             else => {
-                                gdn.err("TODO: Unsupported element type: {}!", .{element_type.kind});
-                                return error.InvalidError;
+                                gdn.err("TODO: Unsupported element type: {s}!", .{@tagName(element_type.kind)});
+                                return error.UnsupportedElementType;
                             },
                         }
                     },
+                    .scalar => switch (field.type.scalarType.?) {
+                        .float32 => .{ c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT, 4 },
+                        .uint32 => .{ c.SDL_GPU_VERTEXELEMENTFORMAT_UINT, 4 },
+                        .bool => .{ c.SDL_GPU_VERTEXELEMENTFORMAT_UINT, 4 },
+                    },
                     else => {
-                        gdn.err("TODO: Unsupported field type: {}!", .{field.type.kind});
-                        return error.InvalidError;
+                        gdn.err("TODO: Unsupported field type: {s}!", .{@tagName(field.type.kind)});
+                        return error.UnsupportedFieldType;
                     },
                 };
 

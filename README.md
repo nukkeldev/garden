@@ -20,6 +20,10 @@ A performance-focused multi-media engine.
     - [x] Surface
     - [x] Pixel
 - [ ] Materials
+  - [?] Ambient Color 
   - [x] Diffuse Color
+  - [ ] Specular
+    - [x] Color
+    - [?] Highlight/Exponent
   - [ ] Everything else
 - [ ] Textures 

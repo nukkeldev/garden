@@ -3,139 +3,285 @@ const std = @import("std");
 const zm = @import("zm");
 const obj = @import("obj");
 
-const transform = @import("transform.zig");
-const c = @import("ffi.zig").c;
 const gpu = @import("gpu.zig");
-
 const log = @import("log.zig");
 
+const DynamicTransform = @import("transform.zig").DynamicTransform;
+const SDL = @import("ffi.zig").SDL;
+const c = @import("ffi.zig").c;
+const gdn = log.gdn;
+
+const IndexType = u32;
+
 pub const Model = struct {
-    o012: transform.O012,
-    meshes: []Mesh,
-};
-
-pub const Mesh = struct {
-    device: *c.SDL_GPUDevice,
-
     name: []const u8,
+    transform: DynamicTransform,
 
-    vertex_data: []const gpu.VertexInput,
-    index_data: ?[]const u32 = null,
-    // SSBOs apparently require a 16-byte alignment.
-    fragment_normals_data: []const [4]f32,
+    meshes: []Mesh,
+    materials: obj.MaterialData,
 
-    use_flat_shading: bool = true,
+    // -- Types -- //
 
-    vertex_buffer: *c.SDL_GPUBuffer,
-    index_buffer: *c.SDL_GPUBuffer,
-    fragment_normals_buffer: *c.SDL_GPUBuffer,
+    pub const Mesh = struct {
+        name: []const u8,
+        material: Material,
 
-    const Self = @This();
+        vertex_data: []const gpu.VertexInput,
+        vertex_buffer: SDL.GPUBuffer,
 
-    /// Creates one Object per mesh in the .obj.
-    pub fn initFromOBJLeaky(allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, model_data: []const u8, material_bytes: ?[]const u8) ![]Self {
-        var model = try obj.parseObj(allocator, model_data);
-        defer model.deinit(allocator);
-        const objects = try allocator.alloc(Self, model.meshes.len);
+        index_data: []const u32,
+        index_buffer: SDL.GPUBuffer,
 
-        var material_data = if (material_bytes) |d| try obj.parseMtl(allocator, d) else null;
-        defer if (material_data != null) material_data.?.deinit(allocator);
+        fragment_normals_data: []const [4]f32,
+        fragment_normals_buffer: SDL.GPUBuffer,
+    };
 
-        const model_verticies = try allocator.alloc(gpu.VertexInput, model.vertices.len / 3);
-        for (0..model_verticies.len) |i| {
-            model_verticies[i] = .{
-                .position = .{ model.vertices[i * 3], model.vertices[i * 3 + 1], model.vertices[i * 3 + 2] },
+    pub const Material = struct {
+        // TODO: We could calculate the angle between two surfaces along an edge
+        // TODO: and determine the initial value for this using that.
+        use_flat_shading: bool = true,
+        material: *const obj.Material,
+
+        pub const DefaultOBJMaterial = obj.Material{
+            .ambient_color = .{ 1, 1, 1 },
+            .diffuse_color = .{ 1, 1, 1 },
+            .specular_color = .{ 1, 1, 1 },
+            .specular_highlight = 128,
+        };
+    };
+
+    // -- Initialization -- //
+
+    /// Initializes a `Model` from an embedded `.obj` model and `.mtl` material library.
+    pub fn initFromEmbeddedObj(
+        allocator: std.mem.Allocator,
+        device: *const SDL.GPUDevice,
+        name: []const u8,
+        transform: DynamicTransform,
+        model_data: []const u8,
+        material_lib_data: []const u8,
+    ) !Model {
+        gdn.debug("Loading model '{s}'...", .{name});
+
+        // Parse the OBJ model and material data.
+        var obj_model = try obj.parseObj(allocator, model_data);
+        defer obj_model.deinit(allocator);
+        var material_lib = try obj.parseMtl(allocator, material_lib_data);
+
+        // Allocate places for us to store our re-computed meshes.
+        const meshes = try allocator.alloc(Mesh, obj_model.meshes.len);
+
+        // The OBJ model gives us a flatten list of verticies that we need to
+        // unflatten as well as so we can store additional data per vertex.
+        const master_vertices = try allocator.alloc(gpu.VertexInput, obj_model.vertices.len / 3);
+        for (master_vertices, 0..) |*vertex, i| {
+            vertex.* = .{
+                .position = .{ obj_model.vertices[i * 3], obj_model.vertices[i * 3 + 1], obj_model.vertices[i * 3 + 2] },
                 .normal = undefined,
-                .color = .{ 1, 1, 1 },
             };
         }
 
-        for (model.meshes, 0..) |mesh, i| {
-            const vertices = try allocator.dupe(gpu.VertexInput, model_verticies);
-            const indices = try allocator.alloc(u32, mesh.indices.len);
+        // Create our transfer buffer.
+        var max_tbuf_len = @sizeOf(gpu.VertexInput) * master_vertices.len;
+        for (obj_model.meshes) |*mesh| {
+            max_tbuf_len = @max(
+                mesh.indices.len * @sizeOf(IndexType),
+                mesh.indices.len / 3 * @sizeOf([4]f32),
+                max_tbuf_len,
+            );
+        }
 
-            for (mesh.indices, 0..) |index, j| {
-                const k: usize = @intCast(index.vertex.?);
+        const tbuf: SDL.GPUTransferBuffer(.Upload) = try .create(
+            allocator,
+            device,
+            max_tbuf_len,
+            "Model Upload Buffer",
+        );
+        defer tbuf.release(device);
 
-                if (index.normal) |n| vertices[k].normal = [_]f32{
-                    model.normals[n * 3],
-                    model.normals[n * 3 + 1],
-                    model.normals[n * 3 + 2],
+        // Additionally, these verticies are common for all meshes so them per `Mesh`.
+        for (obj_model.meshes, meshes, 0..) |*raw_mesh, *mesh, mesh_idx| {
+            const mesh_name = raw_mesh.name orelse {
+                log.gdn.err("Cannot load an unnamed mesh!", .{});
+                return error.InvalidModel;
+            };
+            gdn.debug("Loading mesh '{s}' for model '{s}'.", .{ mesh_name, name });
+
+            // Make sure we are able to render this model.
+            {
+                // Ensure we are loading a triangulated mesh.
+                for (raw_mesh.num_vertices) |*n| if (n.* != 3) {
+                    gdn.err("Cannot load a mesh with non-triangular faces!", .{});
+                    return error.InvalidModel;
                 };
 
-                if (material_data) |m| {
-                    for (mesh.materials) |mat| if (j >= mat.start_index and j <= mat.end_index) {
-                        const material = m.materials.get(mat.material).?;
-                        vertices[k].color = material.diffuse_color orelse .{ 1.0, 1.0, 1.0 };
-                        break;
-                    };
+                // TODO: Currently we only support one material per mesh.
+                if (raw_mesh.materials.len > 1) {
+                    gdn.err("TODO: Cannot load a mesh with multiple materials!", .{});
+                    gdn.debug("The mesh uses the following materials: ", .{});
+                    for (raw_mesh.materials, 0..) |m, i| gdn.debug("{}. {s}", .{ i, m.material });
+                    return error.InvalidModel;
                 }
-                indices[j] = @intCast(k);
             }
 
-            const fragment_normals_data = try calculateFragmentNormals(allocator, vertices, indices);
+            // Allocate enough space for our vertices and indices.
+            const vertices_mask = try allocator.alloc(bool, master_vertices.len);
+            const vertices = try allocator.dupe(gpu.VertexInput, master_vertices);
+            const indices = try allocator.alloc(u32, raw_mesh.indices.len);
 
-            objects[i] = .{
-                .device = device,
-                .name = try allocator.dupe(u8, mesh.name orelse {
-                    log.gdn.err("Meshes must be named!", .{});
-                    return error.MeshesMustBeNamed;
-                }),
-                .vertex_data = vertices,
-                .index_data = indices,
-                .fragment_normals_data = fragment_normals_data,
-                .vertex_buffer = try gpu.initBuffer(
-                    gpu.VertexInput,
-                    @intCast(vertices.len),
-                    vertices,
+            // Copy over all of the indices.
+            for (raw_mesh.indices, indices) |*raw_index, *index| {
+                const vertex_idx: usize = @intCast(raw_index.vertex orelse return error.InvalidModel);
+                const normal_idx: usize = @intCast(raw_index.normal orelse return error.InvalidModel);
+
+                if (!vertices_mask[vertex_idx]) {
+                    vertices[vertex_idx].normal = [_]f32{
+                        obj_model.normals[normal_idx * 3],
+                        obj_model.normals[normal_idx * 3 + 1],
+                        obj_model.normals[normal_idx * 3 + 2],
+                    };
+                    vertices_mask[vertex_idx] = true;
+                }
+
+                index.* = @intCast(vertex_idx);
+            }
+
+            // Calculate fragment normals for flat-shading.
+            const fragment_normals_data = outer: {
+                const fragments = indices.len / 3;
+                const fragment_normals_data = try allocator.alloc([4]f32, fragments);
+
+                for (0..fragments) |fragmentId| {
+                    const v0: zm.Vec3f = vertices[indices[fragmentId * 3]].position;
+                    const v1: zm.Vec3f = vertices[indices[fragmentId * 3 + 1]].position;
+                    const v2: zm.Vec3f = vertices[indices[fragmentId * 3 + 2]].position;
+                    const normal = zm.vec.normalize(zm.vec.cross(v1 - v0, v2 - v0));
+                    fragment_normals_data[fragmentId] = .{ normal[0], normal[1], normal[2], 0 };
+                }
+
+                break :outer fragment_normals_data;
+            };
+
+            // Retrieve the material for this mesh.
+            const material = if (raw_mesh.materials.len > 0) outer: {
+                const material = material_lib.materials.getPtr(raw_mesh.materials[0].material) orelse {
+                    gdn.err("Failed to load material '{s}' from material library!", .{raw_mesh.materials[0].material});
+                    return error.InvalidMaterial;
+                };
+                gdn.debug("Loaded material '{s}': {}", .{ raw_mesh.materials[0].material, material });
+                break :outer material;
+            } else &Material.DefaultOBJMaterial;
+
+            // Create our and upload data to our buffers.
+            var vertex_buffer: SDL.GPUBuffer = undefined;
+            var index_buffer: SDL.GPUBuffer = undefined;
+            var fragment_normals_buffer: SDL.GPUBuffer = undefined;
+            {
+                const cmd = try SDL.GPUCommandBuffer.acquire(device);
+                const cpass = try SDL.GPUCopyPass.begin(&cmd);
+
+                vertex_buffer = try SDL.GPUBuffer.create(
+                    allocator,
                     device,
+                    "Mesh Vertex Buffer",
                     c.SDL_GPU_BUFFERUSAGE_VERTEX,
-                ),
-                .index_buffer = try gpu.initBuffer(u32, @intCast(indices.len), indices, device, c.SDL_GPU_BUFFERUSAGE_INDEX),
-                .fragment_normals_buffer = try gpu.initBuffer(
-                    [4]f32,
-                    @intCast(fragment_normals_data.len),
-                    fragment_normals_data,
+                    @intCast(@sizeOf(gpu.VertexInput) * vertices.len),
+                );
+                try cpass.upload(&tbuf, device, &vertex_buffer, gpu.VertexInput, vertices, true, false);
+
+                index_buffer = try SDL.GPUBuffer.create(
+                    allocator,
                     device,
+                    "Mesh Index Buffer",
+                    c.SDL_GPU_BUFFERUSAGE_INDEX,
+                    @intCast(@sizeOf(IndexType) * indices.len),
+                );
+                try cpass.upload(&tbuf, device, &index_buffer, IndexType, indices, true, false);
+
+                fragment_normals_buffer = try SDL.GPUBuffer.create(
+                    allocator,
+                    device,
+                    "Mesh Fragment Normals Buffer",
                     c.SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
-                ),
+                    @intCast(@sizeOf([4]f32) * fragment_normals_data.len),
+                );
+                try cpass.upload(&tbuf, device, &fragment_normals_buffer, [4]f32, fragment_normals_data, true, false);
+
+                cpass.end();
+                try cmd.submit();
+            }
+
+            mesh.* = .{
+                .name = try allocator.dupe(u8, mesh_name),
+                .material = .{ .material = material },
+                .vertex_data = vertices,
+                .vertex_buffer = vertex_buffer,
+                .index_data = indices,
+                .index_buffer = index_buffer,
+                .fragment_normals_data = fragment_normals_data,
+                .fragment_normals_buffer = fragment_normals_buffer,
             };
 
             log.gdn.debug("Loaded mesh '{s}' with {} verticies and {} indices.", .{
-                objects[i].name,
+                meshes[mesh_idx].name,
                 vertices.len,
                 indices.len,
             });
         }
 
-        return objects;
+        gdn.info("Loaded model '{s}'.", .{name});
+        return Model{ .name = name, .transform = transform, .meshes = meshes, .materials = material_lib };
     }
 
-    pub fn deinit(self: Self) void {
-        c.SDL_ReleaseGPUBuffer(self.device, self.vertex_buffer);
-        c.SDL_ReleaseGPUBuffer(self.device, self.index_buffer);
-        c.SDL_ReleaseGPUBuffer(self.device, self.fragment_normals_buffer);
-    }
+    // -- Deinitialization -- //
 
-    pub fn draw(self: *const Self, render_pass: *c.SDL_GPURenderPass) void {
-        c.SDL_BindGPUFragmentStorageBuffers(render_pass, 0, &self.fragment_normals_buffer, 1);
-        c.SDL_BindGPUVertexBuffers(render_pass, 0, &[_]c.SDL_GPUBufferBinding{.{ .buffer = self.vertex_buffer, .offset = 0 }}, 1);
-        c.SDL_BindGPUIndexBuffer(render_pass, &[_]c.SDL_GPUBufferBinding{.{ .buffer = self.index_buffer, .offset = 0 }}, c.SDL_GPU_INDEXELEMENTSIZE_32BIT);
-        c.SDL_DrawGPUIndexedPrimitives(render_pass, @intCast(self.index_data.?.len), 1, 0, 0, 0);
-    }
-
-    fn calculateFragmentNormals(allocator: std.mem.Allocator, vertices: []const gpu.VertexInput, indices: []const u32) ![]const [4]f32 {
-        const fragments = indices.len / 3;
-        const fragment_normals_data = try allocator.alloc([4]f32, fragments);
-
-        for (0..fragments) |fragmentId| {
-            const v0: zm.Vec3f = vertices[indices[fragmentId * 3]].position;
-            const v1: zm.Vec3f = vertices[indices[fragmentId * 3 + 1]].position;
-            const v2: zm.Vec3f = vertices[indices[fragmentId * 3 + 2]].position;
-            const normal = zm.vec.normalize(zm.vec.cross(v1 - v0, v2 - v0));
-            fragment_normals_data[fragmentId] = .{ normal[0], normal[1], normal[2], 0 };
+    pub fn deinit(model: *Model, device: *const SDL.GPUDevice) void {
+        // TODO: Deallocate everything so we don't need to use an arena.
+        for (model.meshes) |*mesh| {
+            mesh.vertex_buffer.release(device);
+            mesh.index_buffer.release(device);
+            mesh.fragment_normals_buffer.release(device);
         }
+    }
 
-        return fragment_normals_data;
+    // -- Rendering -- //
+
+    pub fn draw(
+        model: *const Model,
+        cmd: *const SDL.GPUCommandBuffer,
+        rpass: *const SDL.GPURenderPass,
+    ) !void {
+        // Calculate the model and inverse transposed normal matricies.
+        const model_matrix = model.transform.modelMatrix();
+        const normal_matrix = model_matrix.inverse().transpose();
+
+        const pmvd = gpu.PerMeshVertexData{
+            .model = model_matrix.data,
+            .normalMat = normal_matrix.data,
+        };
+
+        // Render each mesh with the proper material properties.
+        for (model.meshes) |*mesh| {
+            const pmfd = gpu.PerMeshFragmentData{
+                .normalMat = normal_matrix.data,
+                .flatShading = @as(u32, @intFromBool(mesh.material.use_flat_shading)),
+                .ambientColor = mesh.material.material.diffuse_color.?, // TODO: Blender exports ambient to be white.
+                .diffuseColor = mesh.material.material.diffuse_color.?,
+                .specularColor = mesh.material.material.specular_color.?,
+                .specularExponent = mesh.material.material.specular_highlight.?,
+            };
+
+            // Bind our uniforms and storage buffers.
+            try gpu.Bindings.PER_MESH_VERTEX_DATA.bind(cmd, &pmvd);
+            try gpu.Bindings.PER_MESH_FRAGMENT_DATA.bind(cmd, &pmfd);
+            try gpu.Bindings.FRAGMENT_NORMALS.bind(rpass, &mesh.fragment_normals_buffer, 0);
+
+            // Bind our vertex and index buffers.
+            try rpass.bindBuffer(gpu.VertexInput, .Vertex, 0, &mesh.vertex_buffer, 0);
+            try rpass.bindBuffer(IndexType, .Index, 0, &mesh.index_buffer, 0);
+
+            // Push a render call to the pass.
+            rpass.drawIndexedPrimitives(@intCast(mesh.index_data.len), 1, 0, 0, 0);
+        }
     }
 };

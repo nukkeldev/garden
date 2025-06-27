@@ -31,13 +31,27 @@ pub fn freeCStr(allocator: std.mem.Allocator, str: [:0]const u8) void {
 
 // SDL
 
+/// Usage Notes:
+/// - [Cycling](https://moonside.games/posts/sdl-gpu-concepts-cycling/):
+///     - Previous commands using the resource have their data integrity preserved.
+///     - The data in the resource is undefined for subsequent commands until it is written to.
+/// - Upload all dynamic buffer data early in the frame before you do any render or compute passes.
 pub const SDL = struct {
-    // Loggers
+    // -- Logging -- //
+
     pub const log = @import("log.zig").sdl;
 
     pub fn err(comptime sdl_function: []const u8, comptime format: []const u8, args: anytype) void {
-        log.err("SDL_" ++ sdl_function ++ ": {s}. " ++ format, .{c.SDL_GetError()} ++ args);
+        log.err("" ++ sdl_function ++ ": {s}. " ++ format, .{c.SDL_GetError()} ++ args);
     }
+
+    // -- Enums -- //
+
+    pub const ShaderStage = enum {
+        Vertex,
+        Fragment,
+    };
+
     // -- Initialization -- //
 
     /// [SDL_Init](https://wiki.libsdl.org/SDL3/SDL_Init):
@@ -98,6 +112,24 @@ pub const SDL = struct {
     /// Get a mask of the specified subsystems which are currently initialized.
     pub fn isInitialized(mask: c.SDL_InitFlags) bool {
         return c.SDL_WasInit(mask) == mask;
+    }
+
+    // -- Properties -- //
+
+    /// [SDL_SetStringProperty](https://wiki.libsdl.org/SDL3/SDL_SetStringProperty):
+    /// Set a string property in a group of properties.
+    ///
+    /// This function makes a copy of the string; the caller does not have to preserve the data after this call
+    /// completes.
+    ///
+    /// It is safe to call this function from any thread.
+    pub fn setGlobalStringProperty(allocator: std.mem.Allocator, name: [:0]const u8, value: []const u8) !void {
+        const cvalue = try CStr(allocator, value);
+        defer freeCStr(allocator, cvalue);
+
+        if (!c.SDL_SetStringProperty(c.SDL_GetGlobalProperties(), name, cvalue)) {
+            err("SetStringProperty", "{s} = {s}", .{ name, cvalue });
+        }
     }
 
     // -- Window -- //
@@ -238,7 +270,7 @@ pub const SDL = struct {
         ///
         /// Note that on some platforms, the visible window may not actually be removed from the screen until the SDL
         /// event loop is pumped again, even though the `SDL_Window` is no longer valid after this call.
-        pub fn destroy(window: Window) !void {
+        pub fn destroy(window: *Window) !void {
             c.SDL_DestroyWindow(window.handle);
         }
 
@@ -294,7 +326,7 @@ pub const SDL = struct {
         pub fn getPosition(window: *const Window) ![2]u32 {
             var position: [2]c_int = undefined;
             if (!c.SDL_GetWindowPosition(window.handle, &position[0], &position[1])) {
-                err("SDL_GetWindowPosition", "", .{});
+                err("GetWindowPosition", "", .{});
                 return error.SDLError;
             }
             return .{ @intCast(position[0]), @intCast(position[1]) };
@@ -593,7 +625,7 @@ pub const SDL = struct {
 
         /// [SDL_DestroyGPUDevice](https://wiki.libsdl.org/SDL3/SDL_DestroyGPUDevice):
         /// Destroys a GPU context previously returned by `SDL_CreateGPUDevice`.
-        pub fn destroy(device: GPUDevice) !void {
+        pub fn destroy(device: *GPUDevice) !void {
             try device.waitForIdle();
             // I am assuming calling `SDL_ReleaseWindowFromGPUDevice` is unnecessary.
             c.SDL_DestroyGPUDevice(device.handle);
@@ -705,27 +737,6 @@ pub const SDL = struct {
 
         // -- Usage -- //
 
-        /// [SDL_AcquireGPUCommandBuffer](https://wiki.libsdl.org/SDL3/SDL_AcquireGPUCommandBuffer):
-        /// Acquire a command buffer.
-        ///
-        /// This command buffer is managed by the implementation and should not be freed by the user. The command buffer
-        /// may only be used on the thread it was acquired on. The command buffer should be submitted on the thread it
-        /// was acquired on.
-        ///
-        /// It is valid to acquire multiple command buffers on the same thread at once. In fact a common design pattern
-        /// is to acquire two command buffers per frame where one is dedicated to render and compute passes and the
-        /// other is dedicated to copy passes and other preparatory work such as generating mipmaps. Interleaving
-        /// commands between the two command buffers reduces the total amount of passes overall which improves rendering
-        /// performance.
-        pub fn acquireCommandBuffer(device: *const GPUDevice) !GPUCommandBuffer {
-            return .{
-                .handle = c.SDL_AcquireGPUCommandBuffer(device.handle) orelse {
-                    err("SDL_AcquireGPUCommandBuffer", "", .{});
-                    return error.SDLError;
-                },
-            };
-        }
-
         /// [SDL_CreateGPUTexture](https://wiki.libsdl.org/SDL3/SDL_CreateGPUTexture):
         /// Creates a texture object to be used in graphics or compute workflows.
         ///
@@ -773,7 +784,28 @@ pub const SDL = struct {
     pub const GPUCommandBuffer = struct {
         handle: *c.SDL_GPUCommandBuffer,
 
-        // -- Submission -- //
+        // -- Lifecycle -- //
+
+        /// [SDL_AcquireGPUCommandBuffer](https://wiki.libsdl.org/SDL3/SDL_AcquireGPUCommandBuffer):
+        /// Acquire a command buffer.
+        ///
+        /// This command buffer is managed by the implementation and should not be freed by the user. The command buffer
+        /// may only be used on the thread it was acquired on. The command buffer should be submitted on the thread it
+        /// was acquired on.
+        ///
+        /// It is valid to acquire multiple command buffers on the same thread at once. In fact a common design pattern
+        /// is to acquire two command buffers per frame where one is dedicated to render and compute passes and the
+        /// other is dedicated to copy passes and other preparatory work such as generating mipmaps. Interleaving
+        /// commands between the two command buffers reduces the total amount of passes overall which improves rendering
+        /// performance.
+        pub fn acquire(device: *const GPUDevice) !GPUCommandBuffer {
+            return .{
+                .handle = c.SDL_AcquireGPUCommandBuffer(device.handle) orelse {
+                    err("AcquireGPUCommandBuffer", "", .{});
+                    return error.SDLError;
+                },
+            };
+        }
 
         /// [SDL_SubmitGPUCommandBuffer](https://wiki.libsdl.org/SDL3/SDL_SubmitGPUCommandBuffer):
         /// Submits a command buffer so its commands can be processed on the GPU.
@@ -784,7 +816,7 @@ pub const SDL = struct {
         ///
         /// All commands in the submission are guaranteed to begin executing before any command in a subsequent
         /// submission begins executing.
-        pub fn submit(cmd: GPUCommandBuffer) !void {
+        pub fn submit(cmd: *const GPUCommandBuffer) !void {
             if (!c.SDL_SubmitGPUCommandBuffer(cmd.handle)) {
                 err("SubmitGPUCommandBuffer", "", .{});
                 return error.SDLError;
@@ -818,6 +850,38 @@ pub const SDL = struct {
             return texture;
         }
 
+        /// [SDL_PushGPUVertexUniformData](https://wiki.libsdl.org/SDL3/SDL_PushGPUVertexUniformData):
+        /// Pushes data to a stage's uniform slot on the command buffer.
+        ///
+        /// Subsequent draw calls will use this uniform data.
+        ///
+        /// The data being pushed must respect std140 layout conventions. In practical terms this means you must ensure
+        /// that vec3 and vec4 fields are 16-byte aligned.
+        ///
+        /// For detailed information about accessing uniform data from a shader, please refer to `SDL_CreateGPUShader`.
+        pub fn pushUniformData(
+            cmd: *const GPUCommandBuffer,
+            comptime Stage: ShaderStage,
+            comptime T: type,
+            /// the uniform slot to push data to.
+            slot: u32,
+            /// client data to write.
+            data: *const T,
+        ) void {
+            switch (Stage) {
+                .Vertex => c.SDL_PushGPUVertexUniformData(cmd.handle, slot, @ptrCast(data), @sizeOf(T)),
+                .Fragment => c.SDL_PushGPUFragmentUniformData(cmd.handle, slot, @ptrCast(data), @sizeOf(T)),
+            }
+        }
+    };
+
+    // Passes
+
+    pub const GPURenderPass = struct {
+        handle: *c.SDL_GPURenderPass,
+
+        // -- Lifecycle -- //
+
         /// [SDL_BeginGPURenderPass](https://wiki.libsdl.org/SDL3/SDL_BeginGPURenderPass):
         /// Begins a render pass on a command buffer.
         ///
@@ -826,7 +890,7 @@ pub const SDL = struct {
         /// operations related to graphics pipelines must take place inside of a render pass. A default viewport and
         /// scissor state are automatically set when this is called. You cannot begin another render pass, or begin a
         /// compute pass or copy pass until you have ended the render pass.
-        pub fn beginRenderPass(
+        pub fn begin(
             cmd: *const GPUCommandBuffer,
             color_target_infos: []const c.SDL_GPUColorTargetInfo,
             depth_stencil_target_info: c.SDL_GPUDepthStencilTargetInfo,
@@ -844,60 +908,31 @@ pub const SDL = struct {
             };
         }
 
-        /// [SDL_PushGPUVertexUniformData](https://wiki.libsdl.org/SDL3/SDL_PushGPUVertexUniformData):
-        /// Pushes data to a vertex uniform slot on the command buffer.
-        ///
-        /// Subsequent draw calls will use this uniform data.
-        ///
-        /// The data being pushed must respect std140 layout conventions. In practical terms this means you must ensure
-        /// that vec3 and vec4 fields are 16-byte aligned.
-        ///
-        /// For detailed information about accessing uniform data from a shader, please refer to `SDL_CreateGPUShader`.
-        pub fn pushVertexUniformData(
-            cmd: *const GPUCommandBuffer,
-            comptime T: type,
-            /// the fragment uniform slot to push data to.
-            slot: u32,
-            /// client data to write.
-            data: *const T,
-        ) void {
-            c.SDL_PushGPUVertexUniformData(cmd.handle, slot, @ptrCast(data), @sizeOf(T));
-        }
-
-        /// [SDL_PushGPUFragmentUniformData](https://wiki.libsdl.org/SDL3/SDL_PushGPUFragmentUniformData):
-        /// Pushes data to a fragment uniform slot on the command buffer.
-        ///
-        /// Subsequent draw calls will use this uniform data.
-        ///
-        /// The data being pushed must respect std140 layout conventions. In practical terms this means you must ensure
-        /// that vec3 and vec4 fields are 16-byte aligned.
-        pub fn pushFragmentUniformData(
-            cmd: *const GPUCommandBuffer,
-            comptime T: type,
-            /// the fragment uniform slot to push data to.
-            slot: u32,
-            /// client data to write.
-            data: *const T,
-        ) void {
-            c.SDL_PushGPUFragmentUniformData(cmd.handle, slot, @ptrCast(data), @sizeOf(T));
-        }
-    };
-
-    // See `GPUCommandBuffer.beginRenderPass()`.
-    pub const GPURenderPass = struct {
-        handle: *c.SDL_GPURenderPass,
-
-        // -- Ending -- //
-
         /// [SDL_EndGPURenderPass](https://wiki.libsdl.org/SDL3/SDL_EndGPURenderPass):
         /// Ends the given render pass.
         ///
         /// All bound graphics state on the render pass command buffer is unset. The render pass handle is now invalid.
-        pub fn end(rpass: GPURenderPass) void {
+        pub fn end(rpass: *const GPURenderPass) void {
             c.SDL_EndGPURenderPass(rpass.handle);
         }
 
-        // -- Usage -- //
+        // -- Binding -- //
+
+        pub const BufferBindingPurpose = enum {
+            /// [SDL_BindGPUVertexBuffers](https://wiki.libsdl.org/SDL3/SDL_BindGPUVertexBuffers):
+            /// Binds vertex buffer[-s] on a command buffer for use with subsequent draw calls.
+            Vertex,
+            /// [SDL_BindGPUIndexBuffer](https://wiki.libsdl.org/SDL3/SDL_BindGPUIndexBuffer):
+            /// Binds an index buffer on a command buffer for use with subsequent draw calls.
+            Index,
+            /// [SDL_BindGPUFragmentStorageBuffers](https://wiki.libsdl.org/SDL3/SDL_BindGPUFragmentStorageBuffers):
+            /// Binds storage buffers for use on the fragment shader.
+            ///
+            /// These buffers must have been created with `SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ`.
+            ///
+            /// Be sure your shader is set up according to the requirements documented in SDL_CreateGPUShader().
+            FragmentStorage,
+        };
 
         /// [SDL_BindGPUGraphicsPipeline](https://wiki.libsdl.org/SDL3/SDL_BindGPUGraphicsPipeline):
         /// Binds a graphics pipeline on a render pass to be used in rendering.
@@ -906,5 +941,261 @@ pub const SDL = struct {
         pub fn bindGraphicsPipeline(rpass: *const GPURenderPass, pipeline: *c.SDL_GPUGraphicsPipeline) void {
             c.SDL_BindGPUGraphicsPipeline(rpass.handle, pipeline);
         }
+
+        /// Dispatches a buffer binding call to the proper place for the purpose.
+        /// See `BufferBindingPurpose` for documentation on the functions called.
+        pub fn bindBuffer(
+            rpass: *const GPURenderPass,
+            comptime T: type,
+            purpose: BufferBindingPurpose,
+            slot: u32,
+            buffer: *const GPUBuffer,
+            offset: u32,
+        ) !void {
+            const binding = c.SDL_GPUBufferBinding{ .buffer = buffer.handle, .offset = offset };
+            switch (purpose) {
+                .Vertex => c.SDL_BindGPUVertexBuffers(rpass.handle, slot, &binding, 1),
+                .Index => {
+                    if (slot != 0) log.warn("Non-zero slot passed to index buffer binding, ignoring...", .{});
+                    c.SDL_BindGPUIndexBuffer(rpass.handle, &binding, switch (@sizeOf(T)) {
+                        4 => c.SDL_GPU_INDEXELEMENTSIZE_32BIT,
+                        2 => c.SDL_GPU_INDEXELEMENTSIZE_16BIT,
+                        else => unreachable,
+                    });
+                },
+                .FragmentStorage => {
+                    if (@sizeOf(T) != 16) {
+                        log.err(
+                            "Cannot bind a non-16 byte aligned SSBO! '{s}' is {}-byte aligned.",
+                            .{ @typeName(T), @sizeOf(T) },
+                        );
+                        return error.InvalidSTD140Alignment;
+                    }
+                    if (offset != 0) log.warn("Non-zero offset passed to storage buffer binding, ignoring...", .{});
+                    c.SDL_BindGPUFragmentStorageBuffers(rpass.handle, slot, &buffer.handle, 1);
+                },
+            }
+        }
+
+        // -- Drawing -- //
+
+        /// [SDL_DrawGPUIndexedPrimitives](https://wiki.libsdl.org/SDL3/SDL_DrawGPUIndexedPrimitives):
+        /// Draws data using bound graphics state with an index buffer and instancing enabled.
+        ///
+        /// You must not call this function before binding a graphics pipeline.
+        ///
+        /// Note that the `first_vertex` and `first_instance` parameters are NOT compatible with built-in
+        /// vertex/instance ID variables in shaders (for example, `SV_VertexID`); GPU APIs and shader languages do not
+        /// define these built-in variables consistently, so if your shader depends on them, the only way to keep
+        /// behavior consistent and portable is to always pass `0` for the correlating parameter in the draw calls.
+        pub fn drawIndexedPrimitives(
+            rpass: *const GPURenderPass,
+            num_indices: u32,
+            num_instances: u32,
+            first_index: u32,
+            vertex_offset: i32,
+            first_instance: u32,
+        ) void {
+            c.SDL_DrawGPUIndexedPrimitives(
+                rpass.handle,
+                num_indices,
+                num_instances,
+                first_index,
+                vertex_offset,
+                first_instance,
+            );
+        }
     };
+
+    pub const GPUCopyPass = struct {
+        handle: *c.SDL_GPUCopyPass,
+
+        // -- Lifecycle -- //
+
+        /// [SDL_BeginGPUCopyPass](https://wiki.libsdl.org/SDL3/SDL_BeginGPUCopyPass):
+        /// Begins a copy pass on a command buffer.
+        ///
+        /// All operations related to copying to or from buffers or textures take place inside a copy pass. You must not
+        /// begin another copy pass, or a render pass or compute pass before ending the copy pass.
+        pub fn begin(cmd: *const GPUCommandBuffer) !GPUCopyPass {
+            return .{
+                .handle = c.SDL_BeginGPUCopyPass(cmd.handle) orelse {
+                    err("BeginGPUCopyPass", "", .{});
+                    return error.SDLError;
+                },
+            };
+        }
+
+        /// [SDL_EndGPUCopyPass](https://wiki.libsdl.org/SDL3/SDL_EndGPUCopyPass):
+        /// Ends the current copy pass.
+        pub fn end(cpass: *const GPUCopyPass) void {
+            c.SDL_EndGPUCopyPass(cpass.handle);
+        }
+
+        // -- Usage -- //
+
+        /// [SDL_UploadToGPUBuffer](https://wiki.libsdl.org/SDL3/SDL_UploadToGPUBuffer):
+        /// Uploads data from a transfer buffer to a buffer [except the usage of transfer buffers are elided].
+        ///
+        /// The upload occurs on the GPU timeline. You may assume that the upload has finished in subsequent commands.
+        ///
+        /// TODO: Offsets are hidden from the user for now, a future note may be to batch uploads into a single transfer
+        /// buffer.
+        pub fn upload(
+            cpass: *const GPUCopyPass,
+            /// MUST be a GPUTransferBuf(<size>, .Upload)
+            transfer_buffer: anytype,
+            device: *const GPUDevice,
+            to: *const GPUBuffer,
+            comptime T: type,
+            data: []const T,
+            cycle_tbuf: bool,
+            cycle_buf: bool,
+        ) !void {
+            // Check pre-conditions for upload.
+            const data_size = data.len * @sizeOf(T);
+            if (!@TypeOf(transfer_buffer.*).isUpload()) {
+                log.err("Attempted to upload data to a buffer with a download transfer buffer...", .{});
+                return error.Idiot;
+            }
+
+            if (transfer_buffer.size < data_size) {
+                log.err("Transfer buffer size ({} bytes) is less than the size of the data ({} bytes)!", .{ transfer_buffer.size, data_size });
+                return error.TransferBufferSizeTooSmall;
+            }
+
+            // Transfer the data into the transfer buffer.
+            @memcpy(try transfer_buffer.map(T, device, cycle_tbuf), data);
+            transfer_buffer.unmap(device);
+
+            // Upload the transfer buffer to the buffer.
+            c.SDL_UploadToGPUBuffer(
+                cpass.handle,
+                &.{ .transfer_buffer = transfer_buffer.handle, .offset = 0 },
+                &.{ .buffer = to.handle, .offset = 0, .size = @intCast(data_size) },
+                cycle_buf,
+            );
+        }
+    };
+
+    // Buffers
+
+    pub const GPUBuffer = struct {
+        handle: *c.SDL_GPUBuffer,
+
+        // -- Lifecycle -- //
+
+        /// [SDL_CreateGPUBuffer](https://wiki.libsdl.org/SDL3/SDL_CreateGPUBuffer):
+        /// Creates a buffer object to be used in graphics or compute workflows.
+        ///
+        /// The contents of this buffer are undefined until data is written to the buffer.
+        ///
+        /// Note that certain combinations of usage flags are invalid. For example, a buffer cannot have both the
+        /// `VERTEX` and `INDEX` flags.
+        ///
+        /// If you use a `STORAGE` flag, the data in the buffer must respect `std140` layout conventions. In practical
+        /// terms this means you must ensure that `vec3` and `vec4` fields are `16`-byte aligned.
+        ///
+        /// For better understanding of underlying concepts and memory management with SDL GPU API, you may refer this
+        /// blog post: https://moonside.games/posts/sdl-gpu-concepts-cycling/.
+        ///
+        /// There are optional properties that can be provided through props. These are the supported properties:
+        ///
+        ///     `SDL_PROP_GPU_BUFFER_CREATE_NAME_STRING`: a name that can be displayed in debugging tools.
+        pub fn create(allocator: std.mem.Allocator, device: *const GPUDevice, name: []const u8, usage: c.SDL_GPUBufferUsageFlags, size: u32) !GPUBuffer {
+            try setGlobalStringProperty(allocator, c.SDL_PROP_GPU_BUFFER_CREATE_NAME_STRING, name);
+            return .{
+                .handle = c.SDL_CreateGPUBuffer(device.handle, &.{
+                    .usage = usage,
+                    .size = size,
+                    .props = c.SDL_GetGlobalProperties(),
+                }) orelse {
+                    err("CreateGPUBuffer", "name = {s}, usage = {b}, size = {}", .{ name, usage, size });
+                    return error.SDLError;
+                },
+            };
+        }
+
+        ///[SDL_ReleaseGPUBuffer](https://wiki.libsdl.org/SDL3/SDL_ReleaseGPUBuffer):
+        /// Frees the given buffer as soon as it is safe to do so.
+        ///
+        /// You must not reference the buffer after calling this function.
+        pub fn release(buffer: *const GPUBuffer, device: *const GPUDevice) void {
+            c.SDL_ReleaseGPUBuffer(device.handle, buffer.handle);
+        }
+    };
+
+    pub fn GPUTransferBuffer(comptime purpose: enum { Upload, Download }) type {
+        return struct {
+            size: usize,
+            handle: *c.SDL_GPUTransferBuffer,
+
+            // -- Lifecycle -- //
+
+            /// [SDL_CreateGPUTransferBuffer](https://wiki.libsdl.org/SDL3/SDL_CreateGPUTransferBuffer):
+            /// Creates a transfer buffer to be used when uploading to or downloading from graphics resources.
+            ///
+            /// Download buffers can be particularly expensive to create, so it is good practice to reuse them if data
+            /// will be downloaded regularly.
+            ///
+            /// There are optional properties that can be provided through props. These are the supported properties:
+            ///
+            ///     `SDL_PROP_GPU_TRANSFERBUFFER_CREATE_NAME_STRING`: a name that can be displayed in debugging tools.
+            pub fn create(allocator: std.mem.Allocator, device: *const GPUDevice, size: usize, name: []const u8) !@This() {
+                try setGlobalStringProperty(allocator, c.SDL_PROP_GPU_TRANSFERBUFFER_CREATE_NAME_STRING, name);
+                return .{
+                    .size = size,
+                    .handle = c.SDL_CreateGPUTransferBuffer(device.handle, &.{
+                        .usage = switch (purpose) {
+                            .Upload => c.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+                            .Download => c.SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,
+                        },
+                        .size = @intCast(size),
+                        .props = c.SDL_GetGlobalProperties(),
+                    }) orelse {
+                        SDL.err("CreateGPUTransferBuffer", "", .{});
+                        return error.SDLError;
+                    },
+                };
+            }
+
+            /// [SDL_ReleaseGPUTransferBuffer](https://wiki.libsdl.org/SDL3/SDL_ReleaseGPUTransferBuffer):
+            /// Frees the given transfer buffer as soon as it is safe to do so.
+            ///
+            /// You must not reference the transfer buffer after calling this function.
+            pub fn release(tbuf: *const @This(), device: *const GPUDevice) void {
+                c.SDL_ReleaseGPUTransferBuffer(device.handle, tbuf.handle);
+            }
+
+            // -- Usage -- //
+
+            /// [SDL_MapGPUTransferBuffer](https://wiki.libsdl.org/SDL3/SDL_MapGPUTransferBuffer):
+            /// Maps a transfer buffer into application address space.
+            ///
+            /// You must unmap the transfer buffer before encoding upload commands. The memory is owned by the graphics
+            /// driver - do NOT call `SDL_free()` on the returned pointer.
+            pub fn map(tbuf: *const @This(), comptime T: type, device: *const GPUDevice, cycle: bool) ![*]T {
+                return @ptrCast(@alignCast(c.SDL_MapGPUTransferBuffer(
+                    device.handle,
+                    tbuf.handle,
+                    cycle,
+                ) orelse {
+                    SDL.err("MapGPUTransferBuffer", "T = {s}, cycle = {}", .{ @typeName(T), cycle });
+                    return error.SDLError;
+                }));
+            }
+
+            /// [SDL_UnmapGPUTransferBuffer](https://wiki.libsdl.org/SDL3/SDL_UnmapGPUTransferBuffer):
+            /// Unmaps a previously mapped transfer buffer.
+            pub fn unmap(tbuf: *const @This(), device: *const GPUDevice) void {
+                c.SDL_UnmapGPUTransferBuffer(device.handle, tbuf.handle);
+            }
+
+            // -- Getters -- //
+
+            pub fn isUpload() bool {
+                return purpose == .Upload;
+            }
+        };
+    }
 };

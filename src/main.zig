@@ -5,8 +5,8 @@ const zm = @import("zm");
 const gpu = @import("gpu.zig");
 const ffi = @import("ffi.zig");
 const log = @import("log.zig");
-const transform = @import("transform.zig");
 
+const DynamicTransfrom = @import("transform.zig").DynamicTransform;
 const Model = @import("object.zig").Model;
 const Mesh = @import("object.zig").Mesh;
 
@@ -55,38 +55,15 @@ var im_context: *c.ImGuiContext = undefined;
 var pipeline: ?*c.SDL_GPUGraphicsPipeline = null;
 var depth_texture: *c.SDL_GPUTexture = undefined;
 
-var camera: transform.O012 = .{
-    .o0 = .{
-        .translation = .{ 0, 3, -5 },
-        .rotation = .{ 0, std.math.degreesToRadians(90), 0 },
-    },
+var camera: DynamicTransfrom = .{
+    .translation = .{ 0, 3, -5 },
+    .rotation = .{ 0, std.math.degreesToRadians(90), 0 },
 };
-var player: Model = .{
-    .meshes = undefined,
-    .o012 = .{
-        .o0 = .{
-            .translation = .{ 0, 3, 0 },
-            .scale = @splat(0.5),
-        },
-        .o1 = .{ .rotation = .{ 1, 1, 1 } },
-    },
-};
-var compass: Model = .{
-    .meshes = undefined,
-    .o012 = .{
-        .o0 = .{
-            .translation = .{ 0, -0.25, 0 },
-            .scale = @splat(0.25),
-        },
-        .o1 = .{ .rotation = .{ 0, 0.25, 0 } },
-    },
-};
-var sphere: Model = .{
-    .meshes = undefined,
-    .o012 = .{ .o0 = .{ .translation = .{ 0, 10, 10 } } },
-};
+var player: Model = undefined;
+var compass: Model = undefined;
+var sphere: Model = undefined;
 
-var o012s = [_]*transform.O012{ &camera, &player.o012, &compass.o012, &sphere.o012 };
+var dynamic_transforms = [_]*DynamicTransfrom{ &camera, &player.transform, &compass.transform, &sphere.transform };
 var models = [_]*Model{ &player, &compass, &sphere };
 
 var fov: f32 = INITIAL_FOV;
@@ -175,32 +152,41 @@ fn init() !void {
     keyboard_state = c.SDL_GetKeyboardState(null);
 
     // Create the initial models.
-    compass.meshes = try Mesh.initFromOBJLeaky(
+    compass = try Model.initFromEmbeddedObj(
         model_arena.allocator(),
-        device.handle,
+        &device,
+        "Compass",
+        .{
+            .translation = .{ 0, -0.25, 0 },
+            .scale = @splat(0.25),
+            .rotational_velocity = .{ 0, 0.25, 0 },
+        },
         @embedFile("assets/models/Compass.obj"),
         @embedFile("assets/models/Compass.mtl"),
     );
 
-    player.meshes = try Mesh.initFromOBJLeaky(
+    player = try Model.initFromEmbeddedObj(
         model_arena.allocator(),
-        device.handle,
+        &device,
+        "Player",
+        DynamicTransfrom{
+            .translation = .{ 0, 3, 0 },
+            .scale = @splat(0.5),
+            .rotational_velocity = @splat(1),
+        },
         @embedFile("assets/models/Player.obj"),
         @embedFile("assets/models/Player.mtl"),
     );
-    for (0..player.meshes.len) |i| {
-        if (std.mem.eql(u8, player.meshes[i].name, "Sphere")) {
-            player.meshes[i].use_flat_shading = false;
-        }
-    }
 
-    sphere.meshes = try Mesh.initFromOBJLeaky(
+    sphere = try Model.initFromEmbeddedObj(
         model_arena.allocator(),
-        device.handle,
+        &device,
+        "Sphere",
+        .{ .translation = .{ 0, 10, 10 } },
         @embedFile("assets/models/Sphere.obj"),
         @embedFile("assets/models/Sphere.mtl"),
     );
-    sphere.meshes[0].use_flat_shading = false;
+    sphere.meshes[0].material.use_flat_shading = false;
 }
 
 fn update() !void {
@@ -220,7 +206,7 @@ fn update() !void {
 }
 
 fn pollEvents() !void {
-    camera.o1.rotation = .{ 0, 0, 0 };
+    camera.rotational_velocity = @splat(0);
     mouse_delta_x = 0;
     mouse_delta_y = 0;
 
@@ -257,8 +243,8 @@ fn pollEvents() !void {
                 if (right_mouse_pressed) {
                     mouse_delta_x = event.motion.xrel;
                     mouse_delta_y = -event.motion.yrel;
-                    camera.o1.rotation[1] = mouse_delta_x * PAN_SPEED;
-                    camera.o1.rotation[0] = mouse_delta_y * PAN_SPEED;
+                    camera.rotational_velocity[1] = mouse_delta_x * PAN_SPEED;
+                    camera.rotational_velocity[0] = mouse_delta_y * PAN_SPEED;
                 }
             },
             c.SDL_EVENT_MOUSE_WHEEL => {
@@ -284,17 +270,17 @@ fn pollEvents() !void {
     }
 
     // Free-Cam
-    camera.o1.translation =
-        zm.vec.scale(camera.o0.right(), inputAxis(c.SDL_SCANCODE_A, c.SDL_SCANCODE_D) * MOVEMENT_SPEED) +
+    camera.translational_velocity =
+        zm.vec.scale(camera.right(), inputAxis(c.SDL_SCANCODE_A, c.SDL_SCANCODE_D) * MOVEMENT_SPEED) +
         zm.vec.scale(zm.vec.up(f32), inputAxis(c.SDL_SCANCODE_E, c.SDL_SCANCODE_Q) * MOVEMENT_SPEED) +
-        zm.vec.scale(camera.o0.forward(), inputAxis(c.SDL_SCANCODE_W, c.SDL_SCANCODE_S) * MOVEMENT_SPEED);
+        zm.vec.scale(camera.forward(), inputAxis(c.SDL_SCANCODE_W, c.SDL_SCANCODE_S) * MOVEMENT_SPEED);
 }
 
 fn updateSystems(ticks: u64, dt: u64) !void {
     _ = ticks;
 
     const dt_s = @as(f32, @floatFromInt(dt)) / 1e9;
-    for (o012s) |o012| o012.update(dt_s);
+    for (dynamic_transforms) |t| t.update(dt_s);
 
     if (!c.SDL_SetWindowRelativeMouseMode(window.handle, right_mouse_pressed)) SDL.err("SetWindowRelativeMouseMode", "", .{});
 }
@@ -303,7 +289,7 @@ fn render(ticks: u64, dt: u64) !void {
     _ = ticks;
     const frame_time_ms = @as(f32, @floatFromInt(dt)) / 1e6;
 
-    const cmd = try device.acquireCommandBuffer();
+    const cmd = try SDL.GPUCommandBuffer.acquire(&device);
     const swapchain_texture: ?*c.SDL_GPUTexture = try cmd.waitAndAcquireSwapchainTexture(&window);
     if (swapchain_texture == null) return;
 
@@ -329,30 +315,19 @@ fn render(ticks: u64, dt: u64) !void {
         .stencil_store_op = c.SDL_GPU_STOREOP_STORE,
     };
 
-    const rpass = try cmd.beginRenderPass(&.{color_target_info}, depth_stencil_target_info);
+    const rpass = try SDL.GPURenderPass.begin(&cmd, &.{color_target_info}, depth_stencil_target_info);
 
-    const view_matrix = zm.Mat4f.lookAt(camera.o0.translation, camera.o0.translation + camera.o0.forward(), zm.vec.up(f32));
+    const view_matrix = zm.Mat4f.lookAt(camera.translation, camera.translation + camera.forward(), zm.vec.up(f32));
+    const pfd = gpu.PerFrameVertexData{ .view_proj = proj_matrix.multiply(view_matrix).data };
 
     rpass.bindGraphicsPipeline(pipeline.?);
-    cmd.pushFragmentUniformData(zm.Vec3f, 1, &camera.o0.translation);
 
-    for (models) |model| {
-        const model_matrix = model.o012.o0.modelMatrix();
-        const normal = model_matrix.inverse().transpose().data;
+    try gpu.Bindings.PER_FRAME_VERTEX_DATA.bind(&cmd, &pfd);
 
-        cmd.pushFragmentUniformData([16]f32, 0, &normal);
-        cmd.pushVertexUniformData([16]f32, 1, &normal);
-        cmd.pushVertexUniformData(gpu.PerFrameData, 0, &gpu.PerFrameData{
-            .model = model_matrix.data,
-            .view = view_matrix.data,
-            .proj = proj_matrix.data,
-        });
+    const view_position: [4]f32 = .{ camera.translation[0], camera.translation[1], camera.translation[2], 0 };
+    try gpu.Bindings.VIEW_POSITION.bind(&cmd, &view_position);
 
-        for (model.meshes) |mesh| {
-            cmd.pushFragmentUniformData(u32, 2, &@as(u32, @intFromBool(mesh.use_flat_shading)));
-            mesh.draw(rpass.handle);
-        }
-    }
+    for (models) |model| try model.draw(&cmd, &rpass);
 
     // ImGui Rendering
     if (debug) renderDebug(&cmd, &rpass, frame_time_ms);
@@ -372,7 +347,7 @@ fn exit() !void {
     c.SDL_ReleaseGPUTexture(device.handle, depth_texture);
     c.SDL_ReleaseGPUGraphicsPipeline(device.handle, pipeline);
 
-    for (models) |model| for (model.meshes) |mesh| mesh.deinit();
+    for (models) |model| model.deinit(&device);
     try window.destroy();
 
     shader_arena.deinit();
@@ -441,14 +416,14 @@ fn renderDebug(cmd: *const SDL.GPUCommandBuffer, rpass: *const SDL.GPURenderPass
     c.ImGui_Text("FPS: %-6.2f", 1e3 / frame_time_ms);
     c.ImGui_Text("Frame Time (ms): %-6.3f", frame_time_ms);
     c.ImGui_SeparatorText("Camera");
-    c.ImGui_Text("Position: (%.2f, %.2f, %.2f)", camera.o0.translation[0], camera.o0.translation[1], camera.o0.translation[2]);
+    c.ImGui_Text("Position: (%.2f, %.2f, %.2f)", camera.translation[0], camera.translation[1], camera.translation[2]);
     c.ImGui_Text(
         "Rotation (deg): (%.2f, %.2f, %.2f)",
-        @mod(std.math.radiansToDegrees(camera.o0.rotation[0]), 360),
-        @mod(std.math.radiansToDegrees(camera.o0.rotation[1]), 360),
-        @mod(std.math.radiansToDegrees(camera.o0.rotation[2]), 360),
+        @mod(std.math.radiansToDegrees(camera.rotation[0]), 360),
+        @mod(std.math.radiansToDegrees(camera.rotation[1]), 360),
+        @mod(std.math.radiansToDegrees(camera.rotation[2]), 360),
     );
-    c.ImGui_Text("Velocity: (%.2f, %.2f, %.2f)", camera.o1.translation[0], camera.o1.translation[1], camera.o1.translation[2]);
+    c.ImGui_Text("Velocity: (%.2f, %.2f, %.2f)", camera.translation[0], camera.translation[1], camera.translation[2]);
     c.ImGui_Text("FoV (deg): %.2f", fov);
     c.ImGui_SeparatorText("Mouse");
     c.ImGui_Text("Right Pressed: %d", right_mouse_pressed);

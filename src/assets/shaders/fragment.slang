@@ -1,29 +1,22 @@
+import "structs";
+
+// Bindings
+
 [[vk::binding(0, 2)]]
 StructuredBuffer<float4> fragmentNormals;
 [[vk::binding(0, 3)]]
-uniform ConstantBuffer<float4x4> normalMat;
+uniform ConstantBuffer<PerMeshFragmentData> pmd;
 [[vk::binding(1, 3)]]
 uniform ConstantBuffer<float3> viewPosition;
-[[vk::binding(2, 3)]]
-uniform ConstantBuffer<bool> isFlatShading;
+
+// Lighting
 
 static float3 lightColor = float3(1.0, 1.0, 1.0);
 static float3 lightPosition = float3(0.0, 5.0, 0.0);
 
 static float specularity = 0.5;
 
-// TODO: Import from vertex once you figure out how to not import uniforms.
-struct VertexOutput
-{
-    float3 fragmentPosition;
-    float3 normalDirection;
-    float3 color;
-};
-
-struct Fragment
-{
-    float4 color;
-};
+// Main
 
 [shader("fragment")]
 Fragment fragmentMain(
@@ -38,9 +31,9 @@ Fragment fragmentMain(
 
     // Diffuse
     float3 norm;
-    if (isFlatShading)
+    if (pmd.flatShading)
     {
-        norm = normalize(mul(normalMat, fragmentNormals[fragmentID]).xyz);
+        norm = normalize(mul((float3x3)pmd.normalMat, fragmentNormals[fragmentID].xyz));
     }
     else
     {
@@ -58,6 +51,10 @@ Fragment fragmentMain(
     float3 specular = specularity * spec * lightColor;
 
     Fragment output;
-    output.color = float4((ambient + diffuse + specular) * input.color, 1.0);
+    output.color = float4(
+        ambient * pmd.ambientColor.xyz +
+            diffuse * pmd.diffuseColor.xyz +
+            specular * pmd.specularColor.xyz,
+        1.0);
     return output;
 }
