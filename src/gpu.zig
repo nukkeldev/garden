@@ -109,19 +109,7 @@ pub const PerMeshVertexData = extern struct {
 pub const PerMeshFragmentData = extern struct {
     // TODO: Move this to a per-model.
     normalMat: [16]f32,
-
-    /// bool
-    flatShading: u32,
-    __pad0: [12]u8 = .{0} ** 12,
-
-    ambientColor: [3]f32,
-    __pad1: [4]u8 = .{0} ** 4,
-
-    diffuseColor: [3]f32,
-    __pad2: [4]u8 = .{0} ** 4,
-
-    specularColor: [3]f32,
-    specularExponent: f32,
+    material: Material,
 };
 
 // Per-Frame Data
@@ -135,4 +123,21 @@ pub const PerFrameVertexData = extern struct {
 pub const VertexInput = extern struct {
     position: [3]f32,
     normal: [3]f32,
+};
+
+// Material
+
+pub const Material = extern struct {
+    /// bool
+    flatShading: u32 = @intFromBool(true),
+    __pad0: [12]u8 = .{0} ** 12,
+
+    ambientColor: [3]f32 = .{ 1, 1, 1 },
+    __pad1: [4]u8 = .{0} ** 4,
+
+    diffuseColor: [3]f32 = .{ 1, 1, 1 },
+    __pad2: [4]u8 = .{0} ** 4,
+
+    specularColor: [3]f32 = .{ 1, 1, 1 },
+    specularExponent: f32 = 1000,
 };

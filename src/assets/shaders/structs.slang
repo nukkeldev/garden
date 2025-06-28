@@ -9,13 +9,7 @@ struct PerMeshVertexData
 struct PerMeshFragmentData
 {
     float4x4 normalMat;
-
-    bool flatShading;
-
-    float3 ambientColor;
-    float3 diffuseColor;
-    float3 specularColor;
-    float specularExponent;
+    Material material;
 }
 
 // Per-Frame Data
@@ -51,3 +45,15 @@ struct Fragment
 {
     float4 color;
 };
+
+// Materials
+
+struct Material
+{
+    bool flatShading;
+
+    float3 ambientColor;
+    float3 diffuseColor;
+    float3 specularColor;
+    float specularExponent;
+}

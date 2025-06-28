@@ -16,7 +16,6 @@ static float3 lightPosition = float3(0.0, 5.0, 0.0);
 
 static float specularity = 0.5;
 static float ambientStrength = 0.2;
-static float diffuseStrength = 1;
 
 // Main
 
@@ -26,13 +25,14 @@ Fragment fragmentMain(
     VertexOutput input: VertexOutput) : SV_Target
 {
     // NOTE: Lighting calculations are done in **world space**.
+    Material material = pmd.material;
 
     // Ambient
-    float3 ambient = ambientStrength * lightColor;
+    float3 ambient = (ambientStrength * material.ambientColor) * lightColor;
 
     // Diffuse
     float3 norm;
-    if (pmd.flatShading)
+    if (material.flatShading)
     {
         norm = normalize(mul((float3x3)pmd.normalMat, fragmentNormals[fragmentID].xyz));
     }
@@ -43,19 +43,15 @@ Fragment fragmentMain(
 
     float3 lightDirection = normalize(lightPosition - input.fragmentPosition);
     float diff = max(0.0, dot(norm, lightDirection));
-    float3 diffuse = diff * lightColor * diffuseStrength;
+    float3 diffuse = (diff * material.diffuseColor) * lightColor;
 
     // Specular
     float3 viewDirection = normalize(viewPosition - input.fragmentPosition);
     float3 reflectedDirection = reflect(-lightDirection, norm);
-    float spec = pow(max(dot(viewDirection, reflectedDirection), 0.0), pmd.specularExponent);
-    float3 specular = specularity * spec * lightColor;
+    float spec = pow(max(dot(viewDirection, reflectedDirection), 0.0), material.specularExponent);
+    float3 specular = (specularity * spec * material.specularColor) * lightColor;
 
     Fragment output;
-    output.color = float4(
-        ambient * pmd.ambientColor.xyz +
-            diffuse * pmd.diffuseColor.xyz +
-            specular * pmd.specularColor.xyz,
-        1.0);
+    output.color = float4(ambient + diffuse + specular, 1.0);
     return output;
 }

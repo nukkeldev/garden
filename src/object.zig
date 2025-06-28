@@ -18,13 +18,12 @@ pub const Model = struct {
     transform: DynamicTransform,
 
     meshes: []Mesh,
-    materials: obj.MaterialData,
 
     // -- Types -- //
 
     pub const Mesh = struct {
         name: []const u8,
-        material: Material,
+        material: gpu.Material,
 
         vertex_data: []const gpu.VertexInput,
         vertex_buffer: SDL.GPUBuffer,
@@ -34,20 +33,6 @@ pub const Model = struct {
 
         fragment_normals_data: []const [4]f32,
         fragment_normals_buffer: SDL.GPUBuffer,
-    };
-
-    pub const Material = struct {
-        // TODO: We could calculate the angle between two surfaces along an edge
-        // TODO: and determine the initial value for this using that.
-        use_flat_shading: bool = true,
-        material: *const obj.Material,
-
-        pub const DefaultOBJMaterial = obj.Material{
-            .ambient_color = .{ 1, 1, 1 },
-            .diffuse_color = .{ 1, 1, 1 },
-            .specular_color = .{ 1, 1, 1 },
-            .specular_highlight = 128,
-        };
     };
 
     // -- Initialization -- //
@@ -67,6 +52,7 @@ pub const Model = struct {
         var obj_model = try obj.parseObj(allocator, model_data);
         defer obj_model.deinit(allocator);
         var material_lib = try obj.parseMtl(allocator, material_lib_data);
+        defer material_lib.deinit(allocator);
 
         // Allocate places for us to store our re-computed meshes.
         const meshes = try allocator.alloc(Mesh, obj_model.meshes.len);
@@ -164,13 +150,17 @@ pub const Model = struct {
 
             // Retrieve the material for this mesh.
             const material = if (raw_mesh.materials.len > 0) outer: {
-                const material = material_lib.materials.getPtr(raw_mesh.materials[0].material) orelse {
+                const raw_material = material_lib.materials.getPtr(raw_mesh.materials[0].material) orelse {
                     gdn.err("Failed to load material '{s}' from material library!", .{raw_mesh.materials[0].material});
                     return error.InvalidMaterial;
                 };
+                gdn.debug("Converting raw material '{s}': {}", .{ raw_mesh.materials[0].material, raw_material });
+
+                const material = gpu.Material{};
+
                 gdn.debug("Loaded material '{s}': {}", .{ raw_mesh.materials[0].material, material });
                 break :outer material;
-            } else &Material.DefaultOBJMaterial;
+            } else gpu.Material{};
 
             // Create our and upload data to our buffers.
             var vertex_buffer: SDL.GPUBuffer = undefined;
@@ -213,7 +203,7 @@ pub const Model = struct {
 
             mesh.* = .{
                 .name = try allocator.dupe(u8, mesh_name),
-                .material = .{ .material = material },
+                .material = material,
                 .vertex_data = vertices,
                 .vertex_buffer = vertex_buffer,
                 .index_data = indices,
@@ -230,7 +220,7 @@ pub const Model = struct {
         }
 
         gdn.info("Loaded model '{s}'.", .{name});
-        return Model{ .name = name, .transform = transform, .meshes = meshes, .materials = material_lib };
+        return Model{ .name = name, .transform = transform, .meshes = meshes };
     }
 
     // -- Deinitialization -- //
@@ -264,12 +254,7 @@ pub const Model = struct {
         for (model.meshes) |*mesh| {
             const pmfd = gpu.PerMeshFragmentData{
                 .normalMat = normal_matrix.data,
-                .flatShading = @as(u32, @intFromBool(mesh.material.use_flat_shading)),
-                // TODO: Freaky blender.
-                .ambientColor = mesh.material.material.diffuse_color.?,
-                .diffuseColor = mesh.material.material.diffuse_color.?,
-                .specularColor = mesh.material.material.diffuse_color.?,
-                .specularExponent = mesh.material.material.specular_highlight.?,
+                .material = mesh.material,
             };
 
             // Bind our uniforms and storage buffers.

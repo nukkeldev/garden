@@ -3,10 +3,7 @@
 zig-out/
 .zig-cache/
 
+src/assets/models
 src/assets/shaders/compiled
 
 imgui.ini
-
-*.obj
-*.mtl
-*.blend1

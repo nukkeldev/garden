@@ -59,12 +59,10 @@ var camera: DynamicTransfrom = .{
     .translation = .{ 0, 3, -5 },
     .rotation = .{ 0, std.math.degreesToRadians(90), 0 },
 };
-var player: Model = undefined;
-var compass: Model = undefined;
-var sphere: Model = undefined;
+var car: Model = undefined;
 
-var dynamic_transforms = [_]*DynamicTransfrom{ &camera, &player.transform, &compass.transform, &sphere.transform };
-var models = [_]*Model{ &player, &compass, &sphere };
+var dynamic_transforms = [_]*DynamicTransfrom{ &camera, &car.transform };
+var models = [_]*Model{&car};
 
 var fov: f32 = INITIAL_FOV;
 var proj_matrix: zm.Mat4f = zm.Mat4f.perspective(std.math.degreesToRadians(INITIAL_FOV), 1.0, 0.05, 100.0);
@@ -152,41 +150,14 @@ fn init() !void {
     keyboard_state = c.SDL_GetKeyboardState(null);
 
     // Create the initial models.
-    compass = try Model.initFromEmbeddedObj(
+    car = try Model.initFromEmbeddedObj(
         model_arena.allocator(),
         &device,
-        "Compass",
-        .{
-            .translation = .{ 0, -0.25, 0 },
-            .scale = @splat(0.25),
-            .rotational_velocity = .{ 0, 0.25, 0 },
-        },
-        @embedFile("assets/models/Compass.obj"),
-        @embedFile("assets/models/Compass.mtl"),
+        "Car",
+        .{},
+        @embedFile("assets/models/2021-Lamborghini-Countac [Lexyc16]/Countac.obj"),
+        @embedFile("assets/models/2021-Lamborghini-Countac [Lexyc16]/Countac.mtl"),
     );
-
-    player = try Model.initFromEmbeddedObj(
-        model_arena.allocator(),
-        &device,
-        "Player",
-        DynamicTransfrom{
-            .translation = .{ 0, 3, 0 },
-            .scale = @splat(0.5),
-            .rotational_velocity = @splat(1),
-        },
-        @embedFile("assets/models/Player.obj"),
-        @embedFile("assets/models/Player.mtl"),
-    );
-
-    sphere = try Model.initFromEmbeddedObj(
-        model_arena.allocator(),
-        &device,
-        "Sphere",
-        .{ .translation = .{ 0, 10, 10 } },
-        @embedFile("assets/models/Sphere.obj"),
-        @embedFile("assets/models/Sphere.mtl"),
-    );
-    sphere.meshes[0].material.use_flat_shading = false;
 }
 
 fn update() !void {
@@ -298,7 +269,7 @@ fn render(ticks: u64, dt: u64) !void {
     // SDL Rendering
 
     const color_target_info = c.SDL_GPUColorTargetInfo{
-        .clear_color = .{ .r = 1, .g = 1, .b = 1, .a = 1 },
+        .clear_color = .{ .r = 0, .g = 0, .b = 0, .a = 1 },
         .texture = tex,
         .load_op = c.SDL_GPU_LOADOP_CLEAR,
         .store_op = c.SDL_GPU_STOREOP_STORE,
