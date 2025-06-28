@@ -7,6 +7,10 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const enable_ztracy = b.option(bool, "enable_ztracy", "Enable Tracy profile markers") orelse false;
+    const enable_fibers = b.option(bool, "enable_fibers", "Enable Tracy fiber support") orelse false;
+    const on_demand = b.option(bool, "on_demand", "Build tracy with TRACY_ON_DEMAND") orelse false;
+
     // Executable
 
     const exe_mod = b.createModule(.{
@@ -48,6 +52,25 @@ pub fn build(b: *std.Build) !void {
     const obj_mod = b.dependency("obj", .{ .target = target, .optimize = optimize }).module("obj");
     exe_mod.addImport("obj", obj_mod);
 
+    const ztracy = b.dependency("ztracy", .{
+        .enable_ztracy = enable_ztracy,
+        .enable_fibers = enable_fibers,
+        .on_demand = on_demand,
+    });
+    exe_mod.addImport("ztracy", ztracy.module("root"));
+    exe.linkLibrary(ztracy.artifact("tracy"));
+
+    {
+        const tinyobjloader = b.dependency("tinyobjloader", .{});
+        const wf = b.addWriteFile(
+            "tinyobj_loader_c_wrapper.c",
+            "#define TINYOBJ_LOADER_C_IMPLEMENTATION\n#include <tinyobj_loader_c.h>",
+        );
+
+        exe_mod.addCSourceFile(.{ .file = wf.getDirectory().path(b, "tinyobj_loader_c_wrapper.c") });
+        exe_mod.addIncludePath(tinyobjloader.path("."));
+    }
+
     // Command: build-shaders
 
     const build_shaders = b.step("build-shaders", "Builds all of the shaders.");
@@ -71,6 +94,7 @@ pub fn build(b: *std.Build) !void {
 
     const exe_unit_tests = b.addTest(.{
         .root_module = exe_mod,
+        .filters = b.args orelse &.{},
     });
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 

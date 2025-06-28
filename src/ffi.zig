@@ -14,6 +14,9 @@ pub const c = @cImport({
     @cInclude("dcimgui.h");
     @cInclude("backends/dcimgui_impl_sdlgpu3.h");
     @cInclude("backends/dcimgui_impl_sdl3.h");
+
+    // tinyobj_loader_c
+    @cInclude("tinyobj_loader_c.h");
 });
 
 // C-Interop

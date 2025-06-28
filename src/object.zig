@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const zm = @import("zm");
-const obj = @import("obj");
+const ztracy = @import("ztracy");
 
 const gpu = @import("gpu.zig");
 const log = @import("log.zig");
@@ -46,12 +46,14 @@ pub const Model = struct {
         model_data: []const u8,
         material_lib_data: []const u8,
     ) !Model {
+        const model_tz = ztracy.ZoneN(@src(), "initFromEmbeddedObj");
+        defer model_tz.End();
+
         gdn.debug("Loading model '{s}'...", .{name});
 
         // Parse the OBJ model and material data.
-        var obj_model = try obj.parseObj(allocator, model_data);
+        var obj_model, var material_lib = try loadOBJFromBytesDeprecated(allocator, model_data, material_lib_data);
         defer obj_model.deinit(allocator);
-        var material_lib = try obj.parseMtl(allocator, material_lib_data);
         defer material_lib.deinit(allocator);
 
         // Allocate places for us to store our re-computed meshes.
@@ -59,6 +61,7 @@ pub const Model = struct {
 
         // The OBJ model gives us a flatten list of verticies that we need to
         // unflatten as well as so we can store additional data per vertex.
+        const master_vertices_tz = ztracy.ZoneN(@src(), "copy vert");
         const master_vertices = try allocator.alloc(gpu.VertexInput, obj_model.vertices.len / 3);
         for (master_vertices, 0..) |*vertex, i| {
             vertex.* = .{
@@ -66,6 +69,7 @@ pub const Model = struct {
                 .normal = undefined,
             };
         }
+        master_vertices_tz.End();
 
         // Create our transfer buffer.
         var max_tbuf_len = @sizeOf(gpu.VertexInput) * master_vertices.len;
@@ -87,6 +91,9 @@ pub const Model = struct {
 
         // Additionally, these verticies are common for all meshes so them per `Mesh`.
         for (obj_model.meshes, meshes, 0..) |*raw_mesh, *mesh, mesh_idx| {
+            const mesh_tz = ztracy.ZoneN(@src(), "copy mesh");
+            defer mesh_tz.End();
+
             const mesh_name = raw_mesh.name orelse {
                 log.gdn.err("Cannot load an unnamed mesh!", .{});
                 return error.InvalidModel;
@@ -271,3 +278,86 @@ pub const Model = struct {
         }
     }
 };
+
+// -- Helper Functions -- //
+
+const obj = @import("obj");
+
+const OBJModel = struct { obj.ObjData, obj.MaterialData };
+
+/// Parses an `.obj` model and `.mtl` material library from bytes.
+fn loadOBJFromBytesDeprecated(allocator: std.mem.Allocator, obj_data: []const u8, mtl_data: []const u8) !OBJModel {
+    const parsing_tz = ztracy.ZoneN(@src(), "loadOBJFromBytesDeprecated");
+    defer parsing_tz.End();
+
+    return .{ try obj.parseObj(allocator, obj_data), try obj.parseMtl(allocator, mtl_data) };
+}
+
+/// Parses an `.obj` model and `.mtl` material library from bytes.
+fn loadOBJFromBytes(allocator: std.mem.Allocator, obj_data: []const u8, mtl_data: []const u8) !OBJModel {
+    const parsing_tz = ztracy.ZoneN(@src(), "loadOBJFromBytes");
+    defer parsing_tz.End();
+
+    _ = allocator;
+
+    var attributes: c.tinyobj_attrib_t = undefined;
+
+    var shapes: ?[*]c.tinyobj_shape_t = undefined;
+    var num_shapes: usize = undefined;
+
+    var materials: ?[*]c.tinyobj_material_t = undefined;
+    var num_materials: usize = undefined;
+
+    const FileReaderContext = struct { obj_data: []const u8, mtl_data: []const u8 };
+
+    const file_reader = struct {
+        /// Provide a callback that can read text file without any parsing or modification.
+        pub fn f(
+            /// User provided context.
+            ctx: ?*anyopaque,
+            /// Filename to be loaded, without a file extension.
+            _: [*c]const u8,
+            is_mtl: c_int,
+            /// `.obj` filename. Useful when you load `.mtl` from same location of `.obj`.
+            /// When the callback is called to load `.obj`, `filename` and `obj_filename` are same.
+            _: [*c]const u8,
+            /// Content of loaded file
+            buf: [*c][*c]u8,
+            /// Size of content(file)
+            len: [*c]usize,
+        ) callconv(.c) void {
+            const ctx_: *const FileReaderContext = @ptrCast(@alignCast(ctx.?));
+            var data = if (is_mtl == 1) ctx_.mtl_data else ctx_.obj_data;
+
+            buf.* = @ptrCast(&data.ptr);
+            len.* = data.len;
+        }
+    }.f;
+
+    const ret = c.tinyobj_parse_obj(
+        &attributes,
+        &shapes,
+        &num_shapes,
+        &materials,
+        &num_materials,
+        null,
+        file_reader,
+        @constCast(@ptrCast(&FileReaderContext{ .obj_data = obj_data, .mtl_data = mtl_data })),
+        0,
+    );
+    return switch (ret) {
+        c.TINYOBJ_SUCCESS => unreachable,
+        c.TINYOBJ_ERROR_EMPTY => error.TinyObjEmpty,
+        c.TINYOBJ_ERROR_INVALID_PARAMETER => error.TinyObjInvalidParameter,
+        c.TINYOBJ_ERROR_FILE_OPERATION => error.TinyObjFileOperation,
+        else => unreachable,
+    };
+}
+
+test "loadObjFromBytes" {
+    _ = try loadOBJFromBytes(
+        std.testing.allocator,
+        @embedFile("assets/models/2021-Lamborghini-Countac [Lexyc16]/Countac.obj"),
+        @embedFile("assets/models/2021-Lamborghini-Countac [Lexyc16]/Countac.mtl"),
+    );
+}

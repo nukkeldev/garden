@@ -26,6 +26,14 @@
             .url = "git+https://github.com/chip2n/zig-obj.git#4ad4f6463b553395a1cd5388846d8623f350bf8b",
             .hash = "obj-3.0.0-v8OfipDLAAAfZnwVIVO_8cb6ZWpkxWK6-HTkkF-k6WuO",
         },
+        .ztracy = .{
+            .url = "git+https://github.com/zig-gamedev/ztracy#be3d003f29d59d72e68e493ab531374ab474a795",
+            .hash = "ztracy-0.14.0-dev-zHJSq1oQFwCAq2LhbqsBUmZAipMzsD8UfKL5Etc_OJMb",
+        },
+        .tinyobjloader = .{
+            .url = "git+https://github.com/syoyo/tinyobjloader-c.git#0f8ea84a0da616790b476912e1ccc641f36b463e",
+            .hash = "N-V-__8AAKWmBQDq9z-2g3I1U-0lcQNLp3GjkIX3CScXeOiN",
+        },
     },
     .paths = .{
         "build.zig",

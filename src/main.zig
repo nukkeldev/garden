@@ -429,5 +429,6 @@ fn inputAxis(pos: usize, neg: usize) f32 {
 
 test {
     std.testing.log_level = .debug;
-    std.testing.refAllDeclsRecursive(gpu);
+    std.testing.refAllDeclsRecursive(@import("gpu.zig"));
+    std.testing.refAllDeclsRecursive(@import("object.zig"));
 }
