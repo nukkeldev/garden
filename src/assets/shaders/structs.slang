@@ -13,9 +13,7 @@ struct PerMeshFragmentData
     bool flatShading;
 
     float3 ambientColor;
-
     float3 diffuseColor;
-
     float3 specularColor;
     float specularExponent;
 }

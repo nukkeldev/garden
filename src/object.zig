@@ -265,9 +265,10 @@ pub const Model = struct {
             const pmfd = gpu.PerMeshFragmentData{
                 .normalMat = normal_matrix.data,
                 .flatShading = @as(u32, @intFromBool(mesh.material.use_flat_shading)),
-                .ambientColor = mesh.material.material.diffuse_color.?, // TODO: Blender exports ambient to be white.
+                // TODO: Freaky blender.
+                .ambientColor = mesh.material.material.diffuse_color.?,
                 .diffuseColor = mesh.material.material.diffuse_color.?,
-                .specularColor = mesh.material.material.specular_color.?,
+                .specularColor = mesh.material.material.diffuse_color.?,
                 .specularExponent = mesh.material.material.specular_highlight.?,
             };
 

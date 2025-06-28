@@ -298,7 +298,7 @@ fn render(ticks: u64, dt: u64) !void {
     // SDL Rendering
 
     const color_target_info = c.SDL_GPUColorTargetInfo{
-        .clear_color = .{ .r = 0, .g = 0, .b = 0, .a = 1 },
+        .clear_color = .{ .r = 1, .g = 1, .b = 1, .a = 1 },
         .texture = tex,
         .load_op = c.SDL_GPU_LOADOP_CLEAR,
         .store_op = c.SDL_GPU_STOREOP_STORE,

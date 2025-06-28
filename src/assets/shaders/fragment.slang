@@ -15,6 +15,8 @@ static float3 lightColor = float3(1.0, 1.0, 1.0);
 static float3 lightPosition = float3(0.0, 5.0, 0.0);
 
 static float specularity = 0.5;
+static float ambientStrength = 0.2;
+static float diffuseStrength = 1;
 
 // Main
 
@@ -26,7 +28,6 @@ Fragment fragmentMain(
     // NOTE: Lighting calculations are done in **world space**.
 
     // Ambient
-    float ambientStrength = 0.2;
     float3 ambient = ambientStrength * lightColor;
 
     // Diffuse
@@ -42,12 +43,12 @@ Fragment fragmentMain(
 
     float3 lightDirection = normalize(lightPosition - input.fragmentPosition);
     float diff = max(0.0, dot(norm, lightDirection));
-    float3 diffuse = diff * lightColor;
+    float3 diffuse = diff * lightColor * diffuseStrength;
 
     // Specular
     float3 viewDirection = normalize(viewPosition - input.fragmentPosition);
     float3 reflectedDirection = reflect(-lightDirection, norm);
-    float spec = pow(max(dot(viewDirection, reflectedDirection), 0.0), 32);
+    float spec = pow(max(dot(viewDirection, reflectedDirection), 0.0), pmd.specularExponent);
     float3 specular = specularity * spec * lightColor;
 
     Fragment output;

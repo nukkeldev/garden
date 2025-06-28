@@ -121,9 +121,7 @@ pub const PerMeshFragmentData = extern struct {
     __pad2: [4]u8 = .{0} ** 4,
 
     specularColor: [3]f32,
-    __pad3: [4]u8 = .{0} ** 4,
     specularExponent: f32,
-    __pad4: [12]u8 = .{0} ** 12,
 };
 
 // Per-Frame Data

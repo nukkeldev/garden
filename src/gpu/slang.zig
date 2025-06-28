@@ -261,12 +261,14 @@ pub const RawReflection = struct {
             // Matrix
             rowCount: ?usize = null,
             columnCount: ?usize = null,
-            // Vector
+            // Vector / Array
             elementCount: ?usize = null,
+            // Array
+            uniformStride: ?usize = null,
 
             elementType: ?*ElementType = null,
 
-            pub const ElementTypeKind = enum { @"struct", scalar, matrix, vector };
+            pub const ElementTypeKind = enum { @"struct", scalar, matrix, vector, array };
             pub const ElementTypeScalarType = enum { float32, uint32, bool };
             pub const ElementTypeStructField = struct {
                 name: []const u8,
