@@ -7,3 +7,5 @@ src/assets/models
 src/assets/shaders/compiled
 
 imgui.ini
+
+*.tracy

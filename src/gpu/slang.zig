@@ -1,9 +1,9 @@
 const std = @import("std");
 
 const ffi = @import("../ffi.zig");
-const log = @import("../log.zig");
 
-const gdn = log.gdn;
+const log = std.log.scoped(.@"gpu.slang");
+const oom = @import("../log.zig").oom;
 
 const c = ffi.c;
 const SDL = ffi.SDL;
@@ -43,7 +43,7 @@ pub const ShaderLayout = struct {
 
             // Parse the parameters for this entry point.
             if (entry_point.parameters.len > 1) {
-                gdn.err("TODO: Only a single vertex parameter is supported currently!", .{});
+                log.err("TODO: Only a single vertex parameter is supported currently!", .{});
                 return error.InvalidFormat;
             }
 
@@ -54,7 +54,7 @@ pub const ShaderLayout = struct {
 
             var offset: usize = 0;
             for (fields) |field| {
-                const vertex_attribute = vertex_attributes.addOne() catch log.oom();
+                const vertex_attribute = vertex_attributes.addOne() catch oom();
 
                 vertex_attribute.location = @intCast(field.binding.?.index.?);
                 vertex_attribute.offset = @intCast(offset);
@@ -78,12 +78,12 @@ pub const ShaderLayout = struct {
                                     break :inner .{ @intCast(sdl_type), @sizeOf(f32) * count };
                                 },
                                 else => {
-                                    gdn.err("TODO: Unsupported element scalar type: {s}!", .{@tagName(element_type.scalarType.?)});
+                                    log.err("TODO: Unsupported element scalar type: {s}!", .{@tagName(element_type.scalarType.?)});
                                     return error.UnsupportedElementScalarType;
                                 },
                             },
                             else => {
-                                gdn.err("TODO: Unsupported element type: {s}!", .{@tagName(element_type.kind)});
+                                log.err("TODO: Unsupported element type: {s}!", .{@tagName(element_type.kind)});
                                 return error.UnsupportedElementType;
                             },
                         }
@@ -94,7 +94,7 @@ pub const ShaderLayout = struct {
                         .bool => .{ c.SDL_GPU_VERTEXELEMENTFORMAT_UINT, 4 },
                     },
                     else => {
-                        gdn.err("TODO: Unsupported field type: {s}!", .{@tagName(field.type.kind)});
+                        log.err("TODO: Unsupported field type: {s}!", .{@tagName(field.type.kind)});
                         return error.UnsupportedFieldType;
                     },
                 };
@@ -105,7 +105,7 @@ pub const ShaderLayout = struct {
                 offset += size;
             }
 
-            const vertex_buffer_description = arena_allocator.create(c.SDL_GPUVertexBufferDescription) catch log.oom();
+            const vertex_buffer_description = arena_allocator.create(c.SDL_GPUVertexBufferDescription) catch oom();
             vertex_buffer_description.* = .{
                 .slot = 0,
                 .pitch = @intCast(offset),
@@ -113,12 +113,15 @@ pub const ShaderLayout = struct {
                 .instance_step_rate = 0,
             };
 
-            self.vertex_input = arena_allocator.create(c.SDL_GPUVertexInputState) catch log.oom();
+            self.vertex_input = arena_allocator.create(c.SDL_GPUVertexInputState) catch oom();
             self.vertex_input.?.* = .{
                 .num_vertex_buffers = 1,
                 .vertex_buffer_descriptions = @ptrCast(vertex_buffer_description),
                 .num_vertex_attributes = @intCast(vertex_attributes.items.len),
-                .vertex_attributes = @ptrCast(arena_allocator.dupe(c.SDL_GPUVertexAttribute, vertex_attributes.items) catch log.oom()),
+                .vertex_attributes = @ptrCast(arena_allocator.dupe(
+                    c.SDL_GPUVertexAttribute,
+                    vertex_attributes.items,
+                ) catch oom()),
             };
         }
 
@@ -134,9 +137,9 @@ pub const ShaderLayout = struct {
 
     pub fn createShaderLeaky(self: *const Self, allocator: std.mem.Allocator, device: *c.SDL_GPUDevice, code: []const u8) ?*c.SDL_GPUShader {
         const shader = c.SDL_CreateGPUShader(device, &.{
-            .code = cstr(allocator, code) catch log.oom(),
+            .code = cstr(allocator, code) catch oom(),
             .code_size = code.len,
-            .entrypoint = cstr(allocator, self.entry_point_name) catch log.oom(),
+            .entrypoint = cstr(allocator, self.entry_point_name) catch oom(),
             .format = c.SDL_GPU_SHADERFORMAT_SPIRV,
             .stage = self.stage,
             .num_uniform_buffers = @intCast(self.num_uniform_buffers),

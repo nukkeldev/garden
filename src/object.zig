@@ -1,17 +1,18 @@
 const std = @import("std");
 
 const zm = @import("zm");
-const ztracy = @import("ztracy");
 
 const gpu = @import("gpu.zig");
-const log = @import("log.zig");
-
-const DynamicTransform = @import("transform.zig").DynamicTransform;
-const SDL = @import("ffi.zig").SDL;
 const c = @import("ffi.zig").c;
-const gdn = log.gdn;
+
+const SDL = @import("ffi.zig").SDL;
+const DynamicTransform = @import("transform.zig").DynamicTransform;
+
+const FZ = @import("trace.zig").FnZone;
 
 const IndexType = u32;
+
+const log = std.log.scoped(.object);
 
 pub const Model = struct {
     name: []const u8,
@@ -25,13 +26,13 @@ pub const Model = struct {
         name: []const u8,
         material: gpu.Material,
 
-        vertex_data: []const gpu.VertexInput,
+        vertex_len: usize,
         vertex_buffer: SDL.GPUBuffer,
 
-        index_data: []const u32,
+        index_len: usize,
         index_buffer: SDL.GPUBuffer,
 
-        fragment_normals_data: []const [4]f32,
+        fragment_normals_len: usize,
         fragment_normals_buffer: SDL.GPUBuffer,
     };
 
@@ -46,33 +47,43 @@ pub const Model = struct {
         model_data: []const u8,
         material_lib_data: []const u8,
     ) !Model {
-        const model_tz = ztracy.ZoneN(@src(), "initFromEmbeddedObj");
-        defer model_tz.End();
+        var fz = FZ.init(@src(), "initFromEmbeddedObj");
+        defer fz.end();
 
-        gdn.debug("Loading model '{s}'...", .{name});
+        log.debug("Loading model '{s}'...", .{name});
 
         // Parse the OBJ model and material data.
+        fz.push(@src(), "parse model");
         var obj_model, var material_lib = try loadOBJFromBytesDeprecated(allocator, model_data, material_lib_data);
         defer obj_model.deinit(allocator);
         defer material_lib.deinit(allocator);
 
         // Allocate places for us to store our re-computed meshes.
+        fz.replace(@src(), "alloc meshes");
         const meshes = try allocator.alloc(Mesh, obj_model.meshes.len);
 
         // The OBJ model gives us a flatten list of verticies that we need to
         // unflatten as well as so we can store additional data per vertex.
-        const master_vertices_tz = ztracy.ZoneN(@src(), "copy vert");
-        const master_vertices = try allocator.alloc(gpu.VertexInput, obj_model.vertices.len / 3);
-        for (master_vertices, 0..) |*vertex, i| {
+        fz.replace(@src(), "copy vert");
+        const vertices = try allocator.alloc(gpu.VertexInput, obj_model.vertices.len / 3);
+        const vertices_normal_mask = try allocator.alloc(bool, vertices.len);
+        defer allocator.free(vertices);
+        defer allocator.free(vertices_normal_mask);
+
+        for (vertices, 0..) |*vertex, i| {
             vertex.* = .{
-                .position = .{ obj_model.vertices[i * 3], obj_model.vertices[i * 3 + 1], obj_model.vertices[i * 3 + 2] },
+                .position = .{
+                    obj_model.vertices[i * 3],
+                    obj_model.vertices[i * 3 + 1],
+                    obj_model.vertices[i * 3 + 2],
+                },
                 .normal = undefined,
             };
         }
-        master_vertices_tz.End();
 
         // Create our transfer buffer.
-        var max_tbuf_len = @sizeOf(gpu.VertexInput) * master_vertices.len;
+        fz.replace(@src(), "create tbuf");
+        var max_tbuf_len = @sizeOf(gpu.VertexInput) * vertices.len;
         for (obj_model.meshes) |*mesh| {
             max_tbuf_len = @max(
                 mesh.indices.len * @sizeOf(IndexType),
@@ -90,57 +101,60 @@ pub const Model = struct {
         defer tbuf.release(device);
 
         // Additionally, these verticies are common for all meshes so them per `Mesh`.
+        fz.replace(@src(), "copy meshes");
         for (obj_model.meshes, meshes, 0..) |*raw_mesh, *mesh, mesh_idx| {
-            const mesh_tz = ztracy.ZoneN(@src(), "copy mesh");
-            defer mesh_tz.End();
+            fz.push(@src(), "copy mesh");
+            defer fz.pop();
 
             const mesh_name = raw_mesh.name orelse {
-                log.gdn.err("Cannot load an unnamed mesh!", .{});
+                log.err("Cannot load an unnamed mesh!", .{});
                 return error.InvalidModel;
             };
-            gdn.debug("Loading mesh '{s}' for model '{s}'.", .{ mesh_name, name });
+            log.debug("Loading mesh '{s}' for model '{s}'.", .{ mesh_name, name });
 
             // Make sure we are able to render this model.
             {
                 // Ensure we are loading a triangulated mesh.
                 for (raw_mesh.num_vertices) |*n| if (n.* != 3) {
-                    gdn.err("Cannot load a mesh with non-triangular faces!", .{});
+                    log.err("Cannot load a mesh with non-triangular faces!", .{});
                     return error.InvalidModel;
                 };
 
                 // TODO: Currently we only support one material per mesh.
                 if (raw_mesh.materials.len > 1) {
-                    gdn.err("TODO: Cannot load a mesh with multiple materials!", .{});
-                    gdn.debug("The mesh uses the following materials: ", .{});
-                    for (raw_mesh.materials, 0..) |m, i| gdn.debug("{}. {s}", .{ i, m.material });
+                    log.err("TODO: Cannot load a mesh with multiple materials!", .{});
+                    log.debug("The mesh uses the following materials: ", .{});
+                    for (raw_mesh.materials, 0..) |m, i| log.debug("{}. {s}", .{ i, m.material });
                     return error.InvalidModel;
                 }
             }
 
+            fz.replace(@src(), "alloc vert & index");
             // Allocate enough space for our vertices and indices.
-            const vertices_mask = try allocator.alloc(bool, master_vertices.len);
-            const vertices = try allocator.dupe(gpu.VertexInput, master_vertices);
             const indices = try allocator.alloc(u32, raw_mesh.indices.len);
+            defer allocator.free(indices);
 
             // Copy over all of the indices.
+            fz.replace(@src(), "copy indices");
             for (raw_mesh.indices, indices) |*raw_index, *index| {
                 const vertex_idx: usize = @intCast(raw_index.vertex orelse return error.InvalidModel);
                 const normal_idx: usize = @intCast(raw_index.normal orelse return error.InvalidModel);
 
-                if (!vertices_mask[vertex_idx]) {
+                if (!vertices_normal_mask[vertex_idx]) {
                     vertices[vertex_idx].normal = [_]f32{
                         obj_model.normals[normal_idx * 3],
                         obj_model.normals[normal_idx * 3 + 1],
                         obj_model.normals[normal_idx * 3 + 2],
                     };
-                    vertices_mask[vertex_idx] = true;
+                    vertices_normal_mask[vertex_idx] = true;
                 }
 
                 index.* = @intCast(vertex_idx);
             }
 
             // Calculate fragment normals for flat-shading.
-            const fragment_normals_data = outer: {
+            fz.replace(@src(), "calc frag norms");
+            const fragment_normals = outer: {
                 const fragments = indices.len / 3;
                 const fragment_normals_data = try allocator.alloc([4]f32, fragments);
 
@@ -156,77 +170,75 @@ pub const Model = struct {
             };
 
             // Retrieve the material for this mesh.
+            fz.replace(@src(), "mesh mat");
             const material = if (raw_mesh.materials.len > 0) outer: {
                 const raw_material = material_lib.materials.getPtr(raw_mesh.materials[0].material) orelse {
-                    gdn.err("Failed to load material '{s}' from material library!", .{raw_mesh.materials[0].material});
+                    log.err("Failed to load material '{s}' from material library!", .{raw_mesh.materials[0].material});
                     return error.InvalidMaterial;
                 };
-                gdn.debug("Converting raw material '{s}': {}", .{ raw_mesh.materials[0].material, raw_material });
+                log.debug("Converting raw material '{s}': {}", .{ raw_mesh.materials[0].material, raw_material });
 
                 const material = gpu.Material{};
 
-                gdn.debug("Loaded material '{s}': {}", .{ raw_mesh.materials[0].material, material });
+                log.debug("Loaded material '{s}': {}", .{ raw_mesh.materials[0].material, material });
                 break :outer material;
             } else gpu.Material{};
 
             // Create our and upload data to our buffers.
-            var vertex_buffer: SDL.GPUBuffer = undefined;
-            var index_buffer: SDL.GPUBuffer = undefined;
-            var fragment_normals_buffer: SDL.GPUBuffer = undefined;
-            {
-                const cmd = try SDL.GPUCommandBuffer.acquire(device);
-                const cpass = try SDL.GPUCopyPass.begin(&cmd);
+            fz.replace(@src(), "upload data");
+            const cmd = try SDL.GPUCommandBuffer.acquire(device);
+            const cpass = try SDL.GPUCopyPass.begin(&cmd);
 
-                vertex_buffer = try SDL.GPUBuffer.create(
-                    allocator,
-                    device,
-                    "Mesh Vertex Buffer",
-                    c.SDL_GPU_BUFFERUSAGE_VERTEX,
-                    @intCast(@sizeOf(gpu.VertexInput) * vertices.len),
-                );
-                try cpass.upload(&tbuf, device, &vertex_buffer, gpu.VertexInput, vertices, true, false);
+            const vertex_buffer = try cpass.createAndUploadDataToBuffer(
+                allocator,
+                device,
+                &tbuf,
+                gpu.VertexInput,
+                vertices,
+                "Mesh Vertex Buffer",
+                c.SDL_GPU_BUFFERUSAGE_VERTEX,
+            );
+            const index_buffer = try cpass.createAndUploadDataToBuffer(
+                allocator,
+                device,
+                &tbuf,
+                IndexType,
+                indices,
+                "Mesh Index Buffer",
+                c.SDL_GPU_BUFFERUSAGE_INDEX,
+            );
+            const fragment_normals_buffer = try cpass.createAndUploadDataToBuffer(
+                allocator,
+                device,
+                &tbuf,
+                [4]f32,
+                fragment_normals,
+                "Mesh Fragment Normals Buffer",
+                c.SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
+            );
 
-                index_buffer = try SDL.GPUBuffer.create(
-                    allocator,
-                    device,
-                    "Mesh Index Buffer",
-                    c.SDL_GPU_BUFFERUSAGE_INDEX,
-                    @intCast(@sizeOf(IndexType) * indices.len),
-                );
-                try cpass.upload(&tbuf, device, &index_buffer, IndexType, indices, true, false);
-
-                fragment_normals_buffer = try SDL.GPUBuffer.create(
-                    allocator,
-                    device,
-                    "Mesh Fragment Normals Buffer",
-                    c.SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
-                    @intCast(@sizeOf([4]f32) * fragment_normals_data.len),
-                );
-                try cpass.upload(&tbuf, device, &fragment_normals_buffer, [4]f32, fragment_normals_data, true, false);
-
-                cpass.end();
-                try cmd.submit();
-            }
+            cpass.end();
+            try cmd.submit();
 
             mesh.* = .{
                 .name = try allocator.dupe(u8, mesh_name),
                 .material = material,
-                .vertex_data = vertices,
+                .vertex_len = vertices.len,
                 .vertex_buffer = vertex_buffer,
-                .index_data = indices,
+                .index_len = indices.len,
                 .index_buffer = index_buffer,
-                .fragment_normals_data = fragment_normals_data,
+                .fragment_normals_len = fragment_normals.len,
                 .fragment_normals_buffer = fragment_normals_buffer,
             };
 
-            log.gdn.debug("Loaded mesh '{s}' with {} verticies and {} indices.", .{
+            log.debug("Loaded mesh '{s}' with {} verticies and {} indices.", .{
                 meshes[mesh_idx].name,
                 vertices.len,
                 indices.len,
             });
         }
 
-        gdn.info("Loaded model '{s}'.", .{name});
+        log.info("Loaded model '{s}'.", .{name});
         return Model{ .name = name, .transform = transform, .meshes = meshes };
     }
 
@@ -274,7 +286,7 @@ pub const Model = struct {
             try rpass.bindBuffer(IndexType, .Index, 0, &mesh.index_buffer, 0);
 
             // Push a render call to the pass.
-            rpass.drawIndexedPrimitives(@intCast(mesh.index_data.len), 1, 0, 0, 0);
+            rpass.drawIndexedPrimitives(@intCast(mesh.index_len), 1, 0, 0, 0);
         }
     }
 };
@@ -283,70 +295,77 @@ pub const Model = struct {
 
 const obj = @import("obj");
 
-const OBJModel = struct { obj.ObjData, obj.MaterialData };
+const OBJModelDeprecated = struct { obj.ObjData, obj.MaterialData };
 
 /// Parses an `.obj` model and `.mtl` material library from bytes.
-fn loadOBJFromBytesDeprecated(allocator: std.mem.Allocator, obj_data: []const u8, mtl_data: []const u8) !OBJModel {
-    const parsing_tz = ztracy.ZoneN(@src(), "loadOBJFromBytesDeprecated");
-    defer parsing_tz.End();
+fn loadOBJFromBytesDeprecated(allocator: std.mem.Allocator, obj_data: []const u8, mtl_data: []const u8) !OBJModelDeprecated {
+    var fz = FZ.init(@src(), "loadOBJFromBytesDeprecated");
+    defer fz.end();
 
     return .{ try obj.parseObj(allocator, obj_data), try obj.parseMtl(allocator, mtl_data) };
 }
 
+const OBJModel = struct {};
+
+const FileReaderContext = struct { obj_data: []const u8, mtl_data: []const u8 };
+export fn tinyobj_file_reader_callback(
+    /// User provided context.
+    ctx: ?*anyopaque,
+    /// Filename to be loaded, without a file extension.
+    _: [*c]const u8,
+    is_mtl: c_int,
+    /// `.obj` filename. Useful when you load `.mtl` from same location of `.obj`.
+    /// When the callback is called to load `.obj`, `filename` and `obj_filename` are same.
+    _: [*c]const u8,
+    /// Content of loaded file
+    buf: [*c][*c]u8,
+    /// Size of content(file)
+    len: [*c]usize,
+) callconv(.c) void {
+    const ctx_: *const FileReaderContext = @ptrCast(@alignCast(ctx.?));
+    const data = if (is_mtl == 1) ctx_.mtl_data else ctx_.obj_data;
+
+    buf.* = @constCast(@ptrCast(data.ptr));
+    len.* = data.len;
+}
+
 /// Parses an `.obj` model and `.mtl` material library from bytes.
 fn loadOBJFromBytes(allocator: std.mem.Allocator, obj_data: []const u8, mtl_data: []const u8) !OBJModel {
-    const parsing_tz = ztracy.ZoneN(@src(), "loadOBJFromBytes");
-    defer parsing_tz.End();
+    var fz = FZ.init(@src(), "loadOBJFromBytes");
+    defer fz.end();
 
-    _ = allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
 
-    var attributes: c.tinyobj_attrib_t = undefined;
-
-    var shapes: ?[*]c.tinyobj_shape_t = undefined;
+    var attrib: c.tinyobj_attrib_t = undefined;
+    var shapes: [*c]c.tinyobj_shape_t = null;
     var num_shapes: usize = undefined;
-
-    var materials: ?[*]c.tinyobj_material_t = undefined;
+    var materials: [*c]c.tinyobj_shape_t = null;
     var num_materials: usize = undefined;
 
-    const FileReaderContext = struct { obj_data: []const u8, mtl_data: []const u8 };
-
-    const file_reader = struct {
-        /// Provide a callback that can read text file without any parsing or modification.
-        pub fn f(
-            /// User provided context.
-            ctx: ?*anyopaque,
-            /// Filename to be loaded, without a file extension.
-            _: [*c]const u8,
-            is_mtl: c_int,
-            /// `.obj` filename. Useful when you load `.mtl` from same location of `.obj`.
-            /// When the callback is called to load `.obj`, `filename` and `obj_filename` are same.
-            _: [*c]const u8,
-            /// Content of loaded file
-            buf: [*c][*c]u8,
-            /// Size of content(file)
-            len: [*c]usize,
-        ) callconv(.c) void {
-            const ctx_: *const FileReaderContext = @ptrCast(@alignCast(ctx.?));
-            var data = if (is_mtl == 1) ctx_.mtl_data else ctx_.obj_data;
-
-            buf.* = @ptrCast(&data.ptr);
-            len.* = data.len;
-        }
-    }.f;
+    const flags = c.TINYOBJ_FLAG_TRIANGULATE;
 
     const ret = c.tinyobj_parse_obj(
-        &attributes,
+        &attrib,
         &shapes,
         &num_shapes,
         &materials,
         &num_materials,
-        null,
-        file_reader,
+        "<unused filename>",
+        tinyobj_file_reader_callback,
         @constCast(@ptrCast(&FileReaderContext{ .obj_data = obj_data, .mtl_data = mtl_data })),
-        0,
+        flags,
     );
+
+    log.debug("`tinyobj_parse_obj` returned {}.", .{ret});
+
     return switch (ret) {
-        c.TINYOBJ_SUCCESS => unreachable,
+        c.TINYOBJ_SUCCESS => outer: {
+            log.debug("Successfully parsed .obj model!", .{});
+            log.debug("Model Attributes: {}", .{attrib});
+            log.debug("Vertices: {any}", .{attrib.vertices[0..attrib.num_vertices]});
+            break :outer error.Success;
+        },
         c.TINYOBJ_ERROR_EMPTY => error.TinyObjEmpty,
         c.TINYOBJ_ERROR_INVALID_PARAMETER => error.TinyObjInvalidParameter,
         c.TINYOBJ_ERROR_FILE_OPERATION => error.TinyObjFileOperation,
@@ -355,9 +374,79 @@ fn loadOBJFromBytes(allocator: std.mem.Allocator, obj_data: []const u8, mtl_data
 }
 
 test "loadObjFromBytes" {
-    _ = try loadOBJFromBytes(
+    const @"cube.obj" =
+        \\ # https://gist.github.com/noonat/1131091
+        \\ # cube.obj
+        \\ #
+        \\ 
+        \\ o cube
+        \\ mtllib cube.mtl
+        \\ 
+        \\ v -0.500000 -0.500000 0.500000
+        \\ v 0.500000 -0.500000 0.500000
+        \\ v -0.500000 0.500000 0.500000
+        \\ v 0.500000 0.500000 0.500000
+        \\ v -0.500000 0.500000 -0.500000
+        \\ v 0.500000 0.500000 -0.500000
+        \\ v -0.500000 -0.500000 -0.500000
+        \\ v 0.500000 -0.500000 -0.500000
+        \\ 
+        \\ vt 0.000000 0.000000
+        \\ vt 1.000000 0.000000
+        \\ vt 0.000000 1.000000
+        \\ vt 1.000000 1.000000
+        \\ 
+        \\ vn 0.000000 0.000000 1.000000
+        \\ vn 0.000000 1.000000 0.000000
+        \\ vn 0.000000 0.000000 -1.000000
+        \\ vn 0.000000 -1.000000 0.000000
+        \\ vn 1.000000 0.000000 0.000000
+        \\ vn -1.000000 0.000000 0.000000
+        \\ 
+        \\ g cube
+        \\ usemtl cube
+        \\ s 1
+        \\ f 1/1/1 2/2/1 3/3/1
+        \\ f 3/3/1 2/2/1 4/4/1
+        \\ s 2
+        \\ f 3/1/2 4/2/2 5/3/2
+        \\ f 5/3/2 4/2/2 6/4/2
+        \\ s 3
+        \\ f 5/4/3 6/3/3 7/2/3
+        \\ f 7/2/3 6/3/3 8/1/3
+        \\ s 4
+        \\ f 7/1/4 8/2/4 1/3/4
+        \\ f 1/3/4 8/2/4 2/4/4
+        \\ s 5
+        \\ f 2/1/5 8/2/5 4/3/5
+        \\ f 4/3/5 8/2/5 6/4/5
+        \\ s 6
+        \\ f 7/1/6 1/2/6 5/3/6
+        \\ f 5/3/6 1/2/6 3/4/6
+    ;
+
+    const @"cube.mtl" =
+        \\ newmtl cube
+        \\ Ns 10.0000
+        \\ Ni 1.5000
+        \\ d 1.0000
+        \\ Tr 0.0000
+        \\ Tf 1.0000 1.0000 1.0000 
+        \\ illum 2
+        \\ Ka 0.0000 0.0000 0.0000
+        \\ Kd 0.5880 0.5880 0.5880
+        \\ Ks 0.0000 0.0000 0.0000
+        \\ Ke 0.0000 0.0000 0.0000
+        // \\ map_Ka cube.png
+        // \\ map_Kd cube.png
+    ;
+
+    _ = loadOBJFromBytes(
         std.testing.allocator,
-        @embedFile("assets/models/2021-Lamborghini-Countac [Lexyc16]/Countac.obj"),
-        @embedFile("assets/models/2021-Lamborghini-Countac [Lexyc16]/Countac.mtl"),
-    );
+        @"cube.obj",
+        @"cube.mtl",
+    ) catch |e| {
+        std.debug.print("Error: {}\n", .{e});
+        return;
+    };
 }

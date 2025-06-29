@@ -2,6 +2,7 @@ const std = @import("std");
 
 const zm = @import("zm");
 
+const trace = @import("trace.zig");
 const gpu = @import("gpu.zig");
 const ffi = @import("ffi.zig");
 const log = @import("log.zig");
@@ -10,9 +11,8 @@ const DynamicTransfrom = @import("transform.zig").DynamicTransform;
 const Model = @import("object.zig").Model;
 const Mesh = @import("object.zig").Mesh;
 
-const gdn = log.gdn;
-const sdl = log.sdl;
-const gui = log.gui;
+const log_gdn = std.log.scoped(.garden);
+const log_imgui = std.log.scoped(.imgui);
 
 const c = ffi.c;
 const SDL = ffi.SDL;
@@ -41,11 +41,9 @@ const PAN_SPEED: f32 = 2;
 
 // State
 
-var shader_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-var ecs_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-var model_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-
 var debug_allocator = std.heap.DebugAllocator(.{}).init;
+var arena: trace.TracingArenaAllocator = .init(debug_allocator.allocator());
+var allocator = arena.allocator();
 
 var window: SDL.Window = undefined;
 var device: SDL.GPUDevice = undefined;
@@ -85,17 +83,11 @@ fn init() !void {
     try SDL.initialize(c.SDL_INIT_VIDEO);
 
     // Create the window and device.
-    window = try SDL.Window.create(debug_allocator.allocator(), "Garden Demo", 1024, 1024, WINDOW_FLAGS);
+    window = try SDL.Window.create(allocator, "Garden Demo", 1024, 1024, WINDOW_FLAGS);
     try window.setPosition(c.SDL_WINDOWPOS_CENTERED, c.SDL_WINDOWPOS_CENTERED);
     try window.show();
 
-    device = try SDL.GPUDevice.createAndClaimForWindow(
-        debug_allocator.allocator(),
-        c.SDL_GPU_SHADERFORMAT_SPIRV,
-        false,
-        null,
-        &window,
-    );
+    device = try SDL.GPUDevice.createAndClaimForWindow(allocator, c.SDL_GPU_SHADERFORMAT_SPIRV, false, null, &window);
     try device.setSwapchainParameters(&window, .{ .present_mode = .MAILBOX });
     try device.setAllowedFramesInFlight(3);
 
@@ -114,7 +106,7 @@ fn init() !void {
 
     // Create an ImGui context.
     im_context = c.ImGui_CreateContext(null) orelse {
-        gui.err("Failed to create ImGui context!", .{});
+        log_imgui.err("Failed to create ImGui context!", .{});
         return error.ImGuiError;
     };
 
@@ -127,7 +119,7 @@ fn init() !void {
 
     // Setup ImGui rendering.
     if (!c.cImGui_ImplSDL3_InitForSDLGPU(window.handle)) {
-        gui.err("Failed to initialize SDL3's implementation for SDLGPU!", .{});
+        log_imgui.err("Failed to initialize SDL3's implementation for SDLGPU!", .{});
         return error.ImGuiError;
     }
     var imgui_init = c.ImGui_ImplSDLGPU3_InitInfo{
@@ -136,7 +128,7 @@ fn init() !void {
         .MSAASamples = c.SDL_GPU_SAMPLECOUNT_1,
     };
     if (!c.cImGui_ImplSDLGPU3_Init(&imgui_init)) {
-        gui.err("Failed to initialize SDLGPU3!", .{});
+        log_imgui.err("Failed to initialize SDLGPU3!", .{});
         return error.ImGuiError;
     }
 
@@ -151,7 +143,7 @@ fn init() !void {
 
     // Create the initial models.
     car = try Model.initFromEmbeddedObj(
-        model_arena.allocator(),
+        allocator,
         &device,
         "Car",
         .{},
@@ -253,7 +245,10 @@ fn updateSystems(ticks: u64, dt: u64) !void {
     const dt_s = @as(f32, @floatFromInt(dt)) / 1e9;
     for (dynamic_transforms) |t| t.update(dt_s);
 
-    if (!c.SDL_SetWindowRelativeMouseMode(window.handle, right_mouse_pressed)) SDL.err("SetWindowRelativeMouseMode", "", .{});
+    if (!c.SDL_SetWindowRelativeMouseMode(
+        window.handle,
+        right_mouse_pressed,
+    )) SDL.err("SetWindowRelativeMouseMode", "", .{});
 }
 
 fn render(ticks: u64, dt: u64) !void {
@@ -321,9 +316,7 @@ fn exit() !void {
     for (models) |model| model.deinit(&device);
     try window.destroy();
 
-    shader_arena.deinit();
-    ecs_arena.deinit();
-    model_arena.deinit();
+    arena.deinit();
 
     c.SDL_Quit();
 }
@@ -335,40 +328,77 @@ fn loadPipeline(recompile: bool) !void {
     var compiled_fragment_shader: gpu.compile.CompiledShader = undefined;
 
     if (recompile) {
-        compiled_vertex_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/assets/shaders/vertex.slang", .Vertex, pipeline == null, true)).?;
-        compiled_fragment_shader = (try gpu.compile.CompiledShader.compileBlocking(shader_arena.allocator(), "src/assets/shaders/fragment.slang", .Fragment, pipeline == null, true)).?;
+        compiled_vertex_shader = (try gpu.compile.CompiledShader.compileBlocking(
+            allocator,
+            "src/assets/shaders/vertex.slang",
+            .Vertex,
+            pipeline == null,
+            true,
+        )).?;
+        compiled_fragment_shader = (try gpu.compile.CompiledShader.compileBlocking(
+            allocator,
+            "src/assets/shaders/fragment.slang",
+            .Fragment,
+            pipeline == null,
+            true,
+        )).?;
     } else {
         compiled_vertex_shader = .{
-            .allocator = shader_arena.allocator(),
-            .spv = std.fs.cwd().readFileAlloc(shader_arena.allocator(), "src/assets/shaders/compiled/vertex.spv", std.math.maxInt(usize)) catch {
-                log.gdn.err("Failed to read vertex shader!", .{});
+            .allocator = allocator,
+            .spv = std.fs.cwd().readFileAlloc(
+                allocator,
+                "src/assets/shaders/compiled/vertex.spv",
+                std.math.maxInt(usize),
+            ) catch {
+                log_gdn.err("Failed to read vertex shader!", .{});
                 return;
             },
-            .layout = std.fs.cwd().readFileAlloc(shader_arena.allocator(), "src/assets/shaders/compiled/vertex.layout", std.math.maxInt(usize)) catch {
-                log.gdn.err("Failed to read vertex shader layout!", .{});
+            .layout = std.fs.cwd().readFileAlloc(
+                allocator,
+                "src/assets/shaders/compiled/vertex.layout",
+                std.math.maxInt(usize),
+            ) catch {
+                log_gdn.err("Failed to read vertex shader layout!", .{});
                 return;
             },
         };
 
         compiled_fragment_shader = .{
-            .allocator = shader_arena.allocator(),
-            .spv = std.fs.cwd().readFileAlloc(shader_arena.allocator(), "src/assets/shaders/compiled/fragment.spv", std.math.maxInt(usize)) catch {
-                log.gdn.err("Failed to read fragment shader!", .{});
+            .allocator = allocator,
+            .spv = std.fs.cwd().readFileAlloc(
+                allocator,
+                "src/assets/shaders/compiled/fragment.spv",
+                std.math.maxInt(usize),
+            ) catch {
+                log_gdn.err("Failed to read fragment shader!", .{});
                 return;
             },
-            .layout = std.fs.cwd().readFileAlloc(shader_arena.allocator(), "src/assets/shaders/compiled/fragment.layout", std.math.maxInt(usize)) catch {
-                log.gdn.err("Failed to read fragment shader layout!", .{});
+            .layout = std.fs.cwd().readFileAlloc(
+                allocator,
+                "src/assets/shaders/compiled/fragment.layout",
+                std.math.maxInt(usize),
+            ) catch {
+                log_gdn.err("Failed to read fragment shader layout!", .{});
                 return;
             },
         };
     }
 
-    const vertex_layout = try gpu.slang.ShaderLayout.parseLeaky(shader_arena.allocator(), compiled_vertex_shader.layout);
-    const fragment_layout = try gpu.slang.ShaderLayout.parseLeaky(shader_arena.allocator(), compiled_fragment_shader.layout);
+    const vertex_layout = try gpu.slang.ShaderLayout.parseLeaky(allocator, compiled_vertex_shader.layout);
+    const fragment_layout = try gpu.slang.ShaderLayout.parseLeaky(allocator, compiled_fragment_shader.layout);
 
-    pipeline = gpu.slang.ShaderLayout.createPipelineLeaky(shader_arena.allocator(), device.handle, window.handle, &vertex_layout, &fragment_layout, compiled_vertex_shader.spv, compiled_fragment_shader.spv, wireframe).?;
+    pipeline = gpu.slang.ShaderLayout.createPipelineLeaky(
+        allocator,
+        device.handle,
+        window.handle,
+        &vertex_layout,
+        &fragment_layout,
+        compiled_vertex_shader.spv,
+        compiled_fragment_shader.spv,
+        wireframe,
+    ).?;
 
-    if (recompile) gdn.info("Compiled and reloaded shaders!", .{});
+    if (recompile) log_gdn.info("Compiled and reloaded shaders!", .{});
 }
 
 fn renderDebug(cmd: *const SDL.GPUCommandBuffer, rpass: *const SDL.GPURenderPass, frame_time_ms: f32) void {
@@ -381,7 +411,14 @@ fn renderDebug(cmd: *const SDL.GPUCommandBuffer, rpass: *const SDL.GPURenderPass
     // c.ImGui_ShowMetricsWindow(null);
 
     // Show a performance metrics window.
-    _ = c.ImGui_Begin("-", null, c.ImGuiWindowFlags_NoResize | c.ImGuiWindowFlags_NoDecoration | c.ImGuiWindowFlags_AlwaysAutoResize | c.ImGuiWindowFlags_NoMove);
+    _ = c.ImGui_Begin(
+        "-",
+        null,
+        c.ImGuiWindowFlags_NoResize |
+            c.ImGuiWindowFlags_NoDecoration |
+            c.ImGuiWindowFlags_AlwaysAutoResize |
+            c.ImGuiWindowFlags_NoMove,
+    );
     c.ImGui_SetWindowPos(.{ .x = 5.0, .y = 5.0 }, c.ImGuiCond_None);
     c.ImGui_SeparatorText("Performance");
     c.ImGui_Text("FPS: %-6.2f", 1e3 / frame_time_ms);

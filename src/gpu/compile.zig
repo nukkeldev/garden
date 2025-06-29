@@ -1,5 +1,7 @@
 const std = @import("std");
-const log = @import("../log.zig");
+
+const log = std.log.scoped(.@"gpu.compile");
+const oom = @import("../log.zig").oom;
 
 const EMBEDDED_VERTEX_SHADER = @embedFile("../assets/shaders/compiled/vertex.spv");
 const EMBEDDED_VERTEX_SHADER_LAYOUT = @embedFile("../assets/shaders/compiled/vertex.layout");
@@ -26,7 +28,7 @@ pub const CompiledShader = struct {
         };
 
         if (embedded) {
-            log.gdn.debug("Using pre-compiled {s} shader.", .{ext});
+            log.debug("Using pre-compiled {s} shader.", .{ext});
             return switch (stage) {
                 .Vertex => .{ .allocator = null, .spv = EMBEDDED_VERTEX_SHADER, .layout = EMBEDDED_VERTEX_SHADER_LAYOUT },
                 .Fragment => .{ .allocator = null, .spv = EMBEDDED_FRAGMENT_SHADER, .layout = EMBEDDED_FRAGMENT_SHADER_LAYOUT },
@@ -47,10 +49,10 @@ pub const CompiledShader = struct {
         const basename = std.fs.path.basename(abs);
         const filename = basename[0 .. std.mem.lastIndexOfScalar(u8, basename, '.') orelse basename.len];
 
-        log.gdn.debug("Compiling {s} shader: {s}/{s}.slang...", .{ ext, dirname, filename });
+        log.debug("Compiling {s} shader: {s}/{s}.slang...", .{ ext, dirname, filename });
 
-        const spv_path = std.fmt.allocPrint(allocator, "{s}/compiled/{s}.spv", .{ dirname, filename }) catch log.oom();
-        const layout_path = std.fmt.allocPrint(allocator, "{s}/compiled/{s}.layout", .{ dirname, filename }) catch log.oom();
+        const spv_path = std.fmt.allocPrint(allocator, "{s}/compiled/{s}.spv", .{ dirname, filename }) catch oom();
+        const layout_path = std.fmt.allocPrint(allocator, "{s}/compiled/{s}.layout", .{ dirname, filename }) catch oom();
         defer allocator.free(spv_path);
         defer allocator.free(layout_path);
 
@@ -85,12 +87,12 @@ pub const CompiledShader = struct {
 
         // Read the output files.
         const spv = std.fs.cwd().readFileAlloc(allocator, spv_path, std.math.maxInt(usize)) catch {
-            log.gdn.err("Failed to read vertex shader!", .{});
+            log.err("Failed to read vertex shader!", .{});
             return null;
         };
 
         const layout = std.fs.cwd().readFileAlloc(allocator, layout_path, std.math.maxInt(usize)) catch {
-            log.gdn.err("Failed to read vertex shader layout!", .{});
+            log.err("Failed to read vertex shader layout!", .{});
             return null;
         };
 

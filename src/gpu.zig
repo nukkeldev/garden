@@ -129,7 +129,7 @@ pub const VertexInput = extern struct {
 
 pub const Material = extern struct {
     /// bool
-    flatShading: u32 = @intFromBool(true),
+    flatShading: u32 = @intFromBool(false),
     __pad0: [12]u8 = .{0} ** 12,
 
     ambientColor: [3]f32 = .{ 1, 1, 1 },

@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const FZ = @import("trace.zig").FnZone;
+
 // C export
 
 pub const c = @cImport({
@@ -42,7 +44,7 @@ pub fn freeCStr(allocator: std.mem.Allocator, str: [:0]const u8) void {
 pub const SDL = struct {
     // -- Logging -- //
 
-    pub const log = @import("log.zig").sdl;
+    pub const log = std.log.scoped(.sdl);
 
     pub fn err(comptime sdl_function: []const u8, comptime format: []const u8, args: anytype) void {
         log.err("" ++ sdl_function ++ ": {s}. " ++ format, .{c.SDL_GetError()} ++ args);
@@ -1046,7 +1048,7 @@ pub const SDL = struct {
         /// buffer.
         pub fn upload(
             cpass: *const GPUCopyPass,
-            /// MUST be a GPUTransferBuf(<size>, .Upload)
+            /// MUST be a GPUTransferBuffer(.Upload)
             transfer_buffer: anytype,
             device: *const GPUDevice,
             to: *const GPUBuffer,
@@ -1055,6 +1057,9 @@ pub const SDL = struct {
             cycle_tbuf: bool,
             cycle_buf: bool,
         ) !void {
+            var fz = FZ.init(@src(), "SDL.GPUCopyPass.upload");
+            defer fz.end();
+
             // Check pre-conditions for upload.
             const data_size = data.len * @sizeOf(T);
             if (!@TypeOf(transfer_buffer.*).isUpload()) {
@@ -1068,8 +1073,10 @@ pub const SDL = struct {
             }
 
             // Transfer the data into the transfer buffer.
+            fz.push(@src(), "memcpy");
             @memcpy(try transfer_buffer.map(T, device, cycle_tbuf), data);
             transfer_buffer.unmap(device);
+            fz.pop();
 
             // Upload the transfer buffer to the buffer.
             c.SDL_UploadToGPUBuffer(
@@ -1078,6 +1085,33 @@ pub const SDL = struct {
                 &.{ .buffer = to.handle, .offset = 0, .size = @intCast(data_size) },
                 cycle_buf,
             );
+        }
+
+        /// Creates a `GPUBuffer` and uploads data to it.
+        /// Primarily intended for static data such as geometry.
+        pub fn createAndUploadDataToBuffer(
+            cpass: *const GPUCopyPass,
+            allocator: std.mem.Allocator,
+            device: *const SDL.GPUDevice,
+            tbuf: *const SDL.GPUTransferBuffer(.Upload),
+            comptime T: type,
+            data: []const T,
+            name: []const u8,
+            usage: c.SDL_GPUBufferUsageFlags,
+        ) !SDL.GPUBuffer {
+            var fz = FZ.init(@src(), "SDL.GPUCopyPass.createAndUploadDataToBuffer");
+            defer fz.end();
+
+            const buffer: SDL.GPUBuffer = try SDL.GPUBuffer.create(
+                allocator,
+                device,
+                name,
+                usage,
+                @intCast(@sizeOf(T) * data.len),
+            );
+            try cpass.upload(tbuf, device, &buffer, T, data, true, false);
+
+            return buffer;
         }
     };
 
