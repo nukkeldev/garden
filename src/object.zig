@@ -18,6 +18,8 @@ pub const Model = struct {
     name: []const u8,
     transform: DynamicTransform,
 
+    vertex_len: usize,
+    vertex_buffer: SDL.GPUBuffer,
     meshes: []Mesh,
 
     // -- Types -- //
@@ -25,9 +27,6 @@ pub const Model = struct {
     pub const Mesh = struct {
         name: []const u8,
         material: gpu.Material,
-
-        vertex_len: usize,
-        vertex_buffer: SDL.GPUBuffer,
 
         index_len: usize,
         index_buffer: SDL.GPUBuffer,
@@ -81,8 +80,12 @@ pub const Model = struct {
             };
         }
 
-        // Create our transfer buffer.
-        fz.replace(@src(), "create tbuf");
+        // Create our cmd, cpass, and tbuf.
+        fz.replace(@src(), "create cmd, cpass, and tbuf");
+
+        const cmd = try SDL.GPUCommandBuffer.acquire(device);
+        const cpass = try SDL.GPUCopyPass.begin(&cmd);
+
         var max_tbuf_len = @sizeOf(gpu.VertexInput) * vertices.len;
         for (obj_model.meshes) |*mesh| {
             max_tbuf_len = @max(
@@ -186,18 +189,7 @@ pub const Model = struct {
 
             // Create our and upload data to our buffers.
             fz.replace(@src(), "upload data");
-            const cmd = try SDL.GPUCommandBuffer.acquire(device);
-            const cpass = try SDL.GPUCopyPass.begin(&cmd);
 
-            const vertex_buffer = try cpass.createAndUploadDataToBuffer(
-                allocator,
-                device,
-                &tbuf,
-                gpu.VertexInput,
-                vertices,
-                "Mesh Vertex Buffer",
-                c.SDL_GPU_BUFFERUSAGE_VERTEX,
-            );
             const index_buffer = try cpass.createAndUploadDataToBuffer(
                 allocator,
                 device,
@@ -217,14 +209,9 @@ pub const Model = struct {
                 c.SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
             );
 
-            cpass.end();
-            try cmd.submit();
-
             mesh.* = .{
                 .name = try allocator.dupe(u8, mesh_name),
                 .material = material,
-                .vertex_len = vertices.len,
-                .vertex_buffer = vertex_buffer,
                 .index_len = indices.len,
                 .index_buffer = index_buffer,
                 .fragment_normals_len = fragment_normals.len,
@@ -238,16 +225,38 @@ pub const Model = struct {
             });
         }
 
+        // Upload our vertices.
+        fz.replace(@src(), "upload vertices");
+        const vertex_buffer: SDL.GPUBuffer = try cpass.createAndUploadDataToBuffer(
+            allocator,
+            device,
+            &tbuf,
+            gpu.VertexInput,
+            vertices,
+            "Mesh Vertex Buffer",
+            c.SDL_GPU_BUFFERUSAGE_VERTEX,
+        );
+
+        fz.replace(@src(), "submit cpass");
+        cpass.end();
+        try cmd.submit();
+
         log.info("Loaded model '{s}'.", .{name});
-        return Model{ .name = name, .transform = transform, .meshes = meshes };
+        return Model{
+            .name = name,
+            .transform = transform,
+            .vertex_len = vertices.len,
+            .vertex_buffer = vertex_buffer,
+            .meshes = meshes,
+        };
     }
 
     // -- Deinitialization -- //
 
     pub fn deinit(model: *Model, device: *const SDL.GPUDevice) void {
         // TODO: Deallocate everything so we don't need to use an arena.
+        model.vertex_buffer.release(device);
         for (model.meshes) |*mesh| {
-            mesh.vertex_buffer.release(device);
             mesh.index_buffer.release(device);
             mesh.fragment_normals_buffer.release(device);
         }
@@ -260,7 +269,11 @@ pub const Model = struct {
         cmd: *const SDL.GPUCommandBuffer,
         rpass: *const SDL.GPURenderPass,
     ) !void {
+        var fz = FZ.init(@src(), "Model.draw");
+        defer fz.end();
+
         // Calculate the model and inverse transposed normal matricies.
+        fz.push(@src(), "calc matrices");
         const model_matrix = model.transform.modelMatrix();
         const normal_matrix = model_matrix.inverse().transpose();
 
@@ -270,22 +283,30 @@ pub const Model = struct {
         };
 
         // Render each mesh with the proper material properties.
+        fz.replace(@src(), "bind vertex buf");
+        try rpass.bindBuffer(gpu.VertexInput, .Vertex, 0, &model.vertex_buffer, 0);
+
+        fz.replace(@src(), "draw meshes");
         for (model.meshes) |*mesh| {
+            fz.push(@src(), "draw mesh");
+            defer fz.pop();
+
             const pmfd = gpu.PerMeshFragmentData{
                 .normalMat = normal_matrix.data,
                 .material = mesh.material,
             };
 
             // Bind our uniforms and storage buffers.
+            fz.replace(@src(), "bind");
             try gpu.Bindings.PER_MESH_VERTEX_DATA.bind(cmd, &pmvd);
             try gpu.Bindings.PER_MESH_FRAGMENT_DATA.bind(cmd, &pmfd);
             try gpu.Bindings.FRAGMENT_NORMALS.bind(rpass, &mesh.fragment_normals_buffer, 0);
 
             // Bind our vertex and index buffers.
-            try rpass.bindBuffer(gpu.VertexInput, .Vertex, 0, &mesh.vertex_buffer, 0);
             try rpass.bindBuffer(IndexType, .Index, 0, &mesh.index_buffer, 0);
 
             // Push a render call to the pass.
+            fz.replace(@src(), "draw");
             rpass.drawIndexedPrimitives(@intCast(mesh.index_len), 1, 0, 0, 0);
         }
     }

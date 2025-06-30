@@ -100,8 +100,6 @@ pub const SDL = struct {
     /// to ensure that your main() function will not be changed it is necessary to define SDL_MAIN_HANDLED before
     /// including SDL.h.
     pub fn initialize(flags: c.SDL_InitFlags) !void {
-        c.SDL_SetMainReady();
-
         // Initialize SDL.
         if (!c.SDL_Init(flags)) {
             err("Init", "flags = {b}", .{flags});
@@ -642,6 +640,9 @@ pub const SDL = struct {
         /// [SDL_WaitForGPUIdle](https://wiki.libsdl.org/SDL3/SDL_WaitForGPUIdle):
         /// Blocks the thread until the GPU is completely idle.
         pub fn waitForIdle(device: *const GPUDevice) !void {
+            var fz = FZ.init(@src(), "SDL.GPUDevice.waitForIdle");
+            defer fz.end();
+
             if (!c.SDL_WaitForGPUIdle(device.handle)) {
                 err("WaitForGPUIdle", "", .{});
                 return error.SDLError;

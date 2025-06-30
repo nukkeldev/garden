@@ -1,5 +1,5 @@
 const std = @import("std");
-const ztracy = @import("ztracy");
+pub const ztracy = @import("ztracy");
 
 const mem = std.mem;
 const Allocator = mem.Allocator;

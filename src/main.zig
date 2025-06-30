@@ -6,17 +6,15 @@ const trace = @import("trace.zig");
 const gpu = @import("gpu.zig");
 const ffi = @import("ffi.zig");
 const log = @import("log.zig");
+const c = ffi.c;
 
 const DynamicTransfrom = @import("transform.zig").DynamicTransform;
 const Model = @import("object.zig").Model;
-const Mesh = @import("object.zig").Mesh;
+const FZ = trace.FnZone;
+const SDL = ffi.SDL;
 
 const log_gdn = std.log.scoped(.garden);
 const log_imgui = std.log.scoped(.imgui);
-
-const c = ffi.c;
-const SDL = ffi.SDL;
-const cstr = ffi.cstr;
 
 pub const std_options: std.Options = .{ .log_level = .debug };
 
@@ -79,19 +77,26 @@ var keyboard_state: [*c]const bool = undefined;
 // Functions
 
 fn init() !void {
+    var fz = FZ.init(@src(), "init");
+    defer fz.end();
+
     // Initialize SDL.
+    fz.push(@src(), "sdl init");
     try SDL.initialize(c.SDL_INIT_VIDEO);
 
     // Create the window and device.
+    fz.replace(@src(), "create window");
     window = try SDL.Window.create(allocator, "Garden Demo", 1024, 1024, WINDOW_FLAGS);
     try window.setPosition(c.SDL_WINDOWPOS_CENTERED, c.SDL_WINDOWPOS_CENTERED);
     try window.show();
 
+    fz.replace(@src(), "create gpu device");
     device = try SDL.GPUDevice.createAndClaimForWindow(allocator, c.SDL_GPU_SHADERFORMAT_SPIRV, false, null, &window);
     try device.setSwapchainParameters(&window, .{ .present_mode = .MAILBOX });
     try device.setAllowedFramesInFlight(3);
 
     // Create the depth texture.
+    fz.replace(@src(), "create depth texture");
     const px_size = try window.getSizeInPixels();
     depth_texture = try device.createTexture(.{
         .type = c.SDL_GPU_TEXTURETYPE_2D,
@@ -105,6 +110,7 @@ fn init() !void {
     });
 
     // Create an ImGui context.
+    fz.replace(@src(), "imgui init");
     im_context = c.ImGui_CreateContext(null) orelse {
         log_imgui.err("Failed to create ImGui context!", .{});
         return error.ImGuiError;
@@ -133,6 +139,7 @@ fn init() !void {
     }
 
     // Create the rendering pipeline.
+    fz.replace(@src(), "load pipeline");
     try loadPipeline(false);
 
     // Set the start time.
@@ -142,6 +149,7 @@ fn init() !void {
     keyboard_state = c.SDL_GetKeyboardState(null);
 
     // Create the initial models.
+    fz.replace(@src(), "load models");
     car = try Model.initFromEmbeddedObj(
         allocator,
         &device,
@@ -153,6 +161,9 @@ fn init() !void {
 }
 
 fn update() !void {
+    var fz = FZ.init(@src(), "update");
+    defer fz.end();
+
     const ticks_ns: u64 = @intCast(c.SDL_GetTicksNS());
     const dt = ticks_ns - last_update_ns;
 
@@ -169,6 +180,9 @@ fn update() !void {
 }
 
 fn pollEvents() !void {
+    var fz = FZ.init(@src(), "pollEvents");
+    defer fz.end();
+
     camera.rotational_velocity = @splat(0);
     mouse_delta_x = 0;
     mouse_delta_y = 0;
@@ -240,6 +254,9 @@ fn pollEvents() !void {
 }
 
 fn updateSystems(ticks: u64, dt: u64) !void {
+    var fz = FZ.init(@src(), "updateSystems");
+    defer fz.end();
+
     _ = ticks;
 
     const dt_s = @as(f32, @floatFromInt(dt)) / 1e9;
@@ -252,9 +269,14 @@ fn updateSystems(ticks: u64, dt: u64) !void {
 }
 
 fn render(ticks: u64, dt: u64) !void {
+    trace.ztracy.FrameMark();
+    var fz = FZ.init(@src(), "render");
+    defer fz.end();
+
     _ = ticks;
     const frame_time_ms = @as(f32, @floatFromInt(dt)) / 1e6;
 
+    fz.push(@src(), "acquire");
     const cmd = try SDL.GPUCommandBuffer.acquire(&device);
     const swapchain_texture: ?*c.SDL_GPUTexture = try cmd.waitAndAcquireSwapchainTexture(&window);
     if (swapchain_texture == null) return;
@@ -263,6 +285,7 @@ fn render(ticks: u64, dt: u64) !void {
 
     // SDL Rendering
 
+    fz.replace(@src(), "begin render pass");
     const color_target_info = c.SDL_GPUColorTargetInfo{
         .clear_color = .{ .r = 0, .g = 0, .b = 0, .a = 1 },
         .texture = tex,
@@ -282,28 +305,34 @@ fn render(ticks: u64, dt: u64) !void {
     };
 
     const rpass = try SDL.GPURenderPass.begin(&cmd, &.{color_target_info}, depth_stencil_target_info);
+    rpass.bindGraphicsPipeline(pipeline.?);
 
+    fz.replace(@src(), "calc view mat");
     const view_matrix = zm.Mat4f.lookAt(camera.translation, camera.translation + camera.forward(), zm.vec.up(f32));
     const pfd = gpu.PerFrameVertexData{ .view_proj = proj_matrix.multiply(view_matrix).data };
 
-    rpass.bindGraphicsPipeline(pipeline.?);
-
+    fz.replace(@src(), "bind");
     try gpu.Bindings.PER_FRAME_VERTEX_DATA.bind(&cmd, &pfd);
 
     const view_position: [4]f32 = .{ camera.translation[0], camera.translation[1], camera.translation[2], 0 };
     try gpu.Bindings.VIEW_POSITION.bind(&cmd, &view_position);
 
+    fz.replace(@src(), "draw");
     for (models) |model| try model.draw(&cmd, &rpass);
 
     // ImGui Rendering
     if (debug) renderDebug(&cmd, &rpass, frame_time_ms);
 
     // Submit the render pass.
+    fz.replace(@src(), "submit");
     rpass.end();
     try cmd.submit();
 }
 
 fn exit() !void {
+    var fz = FZ.init(@src(), "exit");
+    defer fz.end();
+
     try device.waitForIdle();
 
     c.cImGui_ImplSDLGPU3_Shutdown();
@@ -322,6 +351,9 @@ fn exit() !void {
 }
 
 fn loadPipeline(recompile: bool) !void {
+    var fz = FZ.init(@src(), "loadPipeline");
+    defer fz.end();
+
     if (pipeline != null) c.SDL_ReleaseGPUGraphicsPipeline(device.handle, pipeline);
 
     var compiled_vertex_shader: gpu.compile.CompiledShader = undefined;
