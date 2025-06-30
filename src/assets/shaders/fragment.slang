@@ -28,7 +28,7 @@ Fragment fragmentMain(
     Material material = pmd.material;
 
     // Ambient
-    float3 ambient = (ambientStrength * material.ambientColor) * lightColor;
+    float3 ambient = (ambientStrength * material.diffuseColor) * lightColor;
 
     // Diffuse
     float3 norm;
@@ -49,7 +49,7 @@ Fragment fragmentMain(
     float3 viewDirection = normalize(viewPosition - input.fragmentPosition);
     float3 reflectedDirection = reflect(-lightDirection, norm);
     float spec = pow(max(dot(viewDirection, reflectedDirection), 0.0), material.specularExponent);
-    float3 specular = (specularity * spec * material.specularColor) * lightColor;
+    float3 specular = (specularity * spec * material.diffuseColor) * lightColor;
 
     Fragment output;
     output.color = float4(ambient + diffuse + specular, 1.0);

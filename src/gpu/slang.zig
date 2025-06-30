@@ -9,6 +9,8 @@ const c = ffi.c;
 const SDL = ffi.SDL;
 const cstr = ffi.CStr;
 
+// TODO: FIXED_BUFFER_ALLOCATOR FOR COMPTIME JSON PARSING
+
 /// This is not a full representation of the file, just the properties we need.
 pub const ShaderLayout = struct {
     entry_point_name: []const u8,

@@ -157,6 +157,8 @@ fn init() !void {
         .{},
         @embedFile("assets/models/2021-Lamborghini-Countac [Lexyc16]/Countac.obj"),
         @embedFile("assets/models/2021-Lamborghini-Countac [Lexyc16]/Countac.mtl"),
+        // @embedFile("assets/models/cube/Cube.obj"),
+        // @embedFile("assets/models/cube/Cube.mtl"),
     );
 }
 

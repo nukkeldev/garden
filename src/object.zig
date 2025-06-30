@@ -3,14 +3,13 @@ const std = @import("std");
 const zm = @import("zm");
 
 const gpu = @import("gpu.zig");
+const trace = @import("trace.zig");
 const c = @import("ffi.zig").c;
 
 const SDL = @import("ffi.zig").SDL;
 const DynamicTransform = @import("transform.zig").DynamicTransform;
 
-const FZ = @import("trace.zig").FnZone;
-
-const IndexType = u32;
+const FZ = trace.FnZone;
 
 const log = std.log.scoped(.object);
 
@@ -28,7 +27,7 @@ pub const Model = struct {
         name: []const u8,
         material: gpu.Material,
 
-        index_len: usize,
+        face_count: usize,
         index_buffer: SDL.GPUBuffer,
 
         fragment_normals_len: usize,
@@ -53,30 +52,23 @@ pub const Model = struct {
 
         // Parse the OBJ model and material data.
         fz.push(@src(), "parse model");
-        var obj_model, var material_lib = try loadOBJFromBytesDeprecated(allocator, model_data, material_lib_data);
-        defer obj_model.deinit(allocator);
-        defer material_lib.deinit(allocator);
+        const model = try TinjObjLoader.loadFromBytes(allocator, name, model_data, material_lib_data);
+        defer model.deinit(allocator);
 
         // Allocate places for us to store our re-computed meshes.
         fz.replace(@src(), "alloc meshes");
-        const meshes = try allocator.alloc(Mesh, obj_model.meshes.len);
+        const meshes = try allocator.alloc(Mesh, model.meshes.len);
 
         // The OBJ model gives us a flatten list of verticies that we need to
         // unflatten as well as so we can store additional data per vertex.
         fz.replace(@src(), "copy vert");
-        const vertices = try allocator.alloc(gpu.VertexInput, obj_model.vertices.len / 3);
-        const vertices_normal_mask = try allocator.alloc(bool, vertices.len);
+        const vertices = try allocator.alloc(gpu.VertexInput, model.vertices.len);
         defer allocator.free(vertices);
-        defer allocator.free(vertices_normal_mask);
 
         for (vertices, 0..) |*vertex, i| {
             vertex.* = .{
-                .position = .{
-                    obj_model.vertices[i * 3],
-                    obj_model.vertices[i * 3 + 1],
-                    obj_model.vertices[i * 3 + 2],
-                },
-                .normal = undefined,
+                .position = model.vertices[i],
+                .normal = model.normals[i],
             };
         }
 
@@ -87,10 +79,9 @@ pub const Model = struct {
         const cpass = try SDL.GPUCopyPass.begin(&cmd);
 
         var max_tbuf_len = @sizeOf(gpu.VertexInput) * vertices.len;
-        for (obj_model.meshes) |*mesh| {
+        for (model.meshes) |*mesh| {
             max_tbuf_len = @max(
-                mesh.indices.len * @sizeOf(IndexType),
-                mesh.indices.len / 3 * @sizeOf([4]f32),
+                mesh.indices.len * @sizeOf([4]f32),
                 max_tbuf_len,
             );
         }
@@ -103,89 +94,39 @@ pub const Model = struct {
         );
         defer tbuf.release(device);
 
-        // Additionally, these verticies are common for all meshes so them per `Mesh`.
+        // Additionally, these vertices are common for all meshes so clone them
+        // per `Mesh`.
         fz.replace(@src(), "copy meshes");
-        for (obj_model.meshes, meshes, 0..) |*raw_mesh, *mesh, mesh_idx| {
+        for (model.meshes, meshes, 0..) |*raw_mesh, *mesh, mesh_idx| {
             fz.push(@src(), "copy mesh");
             defer fz.pop();
 
             const mesh_name = raw_mesh.name orelse {
-                log.err("Cannot load an unnamed mesh!", .{});
+                log.err("Meshes must be named!", .{});
                 return error.InvalidModel;
             };
-            log.debug("Loading mesh '{s}' for model '{s}'.", .{ mesh_name, name });
 
-            // Make sure we are able to render this model.
-            {
-                // Ensure we are loading a triangulated mesh.
-                for (raw_mesh.num_vertices) |*n| if (n.* != 3) {
-                    log.err("Cannot load a mesh with non-triangular faces!", .{});
-                    return error.InvalidModel;
-                };
-
-                // TODO: Currently we only support one material per mesh.
-                if (raw_mesh.materials.len > 1) {
-                    log.err("TODO: Cannot load a mesh with multiple materials!", .{});
-                    log.debug("The mesh uses the following materials: ", .{});
-                    for (raw_mesh.materials, 0..) |m, i| log.debug("{}. {s}", .{ i, m.material });
-                    return error.InvalidModel;
-                }
-            }
-
-            fz.replace(@src(), "alloc vert & index");
-            // Allocate enough space for our vertices and indices.
-            const indices = try allocator.alloc(u32, raw_mesh.indices.len);
-            defer allocator.free(indices);
-
-            // Copy over all of the indices.
             fz.replace(@src(), "copy indices");
-            for (raw_mesh.indices, indices) |*raw_index, *index| {
-                const vertex_idx: usize = @intCast(raw_index.vertex orelse return error.InvalidModel);
-                const normal_idx: usize = @intCast(raw_index.normal orelse return error.InvalidModel);
-
-                if (!vertices_normal_mask[vertex_idx]) {
-                    vertices[vertex_idx].normal = [_]f32{
-                        obj_model.normals[normal_idx * 3],
-                        obj_model.normals[normal_idx * 3 + 1],
-                        obj_model.normals[normal_idx * 3 + 2],
-                    };
-                    vertices_normal_mask[vertex_idx] = true;
-                }
-
-                index.* = @intCast(vertex_idx);
-            }
+            // Allocate enough space for our indices.
+            const indices = try allocator.dupe([3]u32, raw_mesh.indices);
+            defer allocator.free(indices);
 
             // Calculate fragment normals for flat-shading.
             fz.replace(@src(), "calc frag norms");
             const fragment_normals = outer: {
-                const fragments = indices.len / 3;
-                const fragment_normals_data = try allocator.alloc([4]f32, fragments);
+                const fragment_normals_data = try allocator.alloc([4]f32, indices.len);
 
-                for (0..fragments) |fragmentId| {
-                    const v0: zm.Vec3f = vertices[indices[fragmentId * 3]].position;
-                    const v1: zm.Vec3f = vertices[indices[fragmentId * 3 + 1]].position;
-                    const v2: zm.Vec3f = vertices[indices[fragmentId * 3 + 2]].position;
+                for (0..indices.len) |idx| {
+                    const index = indices[idx];
+                    const v0: zm.Vec3f = vertices[index[0]].position;
+                    const v1: zm.Vec3f = vertices[index[1]].position;
+                    const v2: zm.Vec3f = vertices[index[2]].position;
                     const normal = zm.vec.normalize(zm.vec.cross(v1 - v0, v2 - v0));
-                    fragment_normals_data[fragmentId] = .{ normal[0], normal[1], normal[2], 0 };
+                    fragment_normals_data[idx] = .{ normal[0], normal[1], normal[2], 0 };
                 }
 
                 break :outer fragment_normals_data;
             };
-
-            // Retrieve the material for this mesh.
-            fz.replace(@src(), "mesh mat");
-            const material = if (raw_mesh.materials.len > 0) outer: {
-                const raw_material = material_lib.materials.getPtr(raw_mesh.materials[0].material) orelse {
-                    log.err("Failed to load material '{s}' from material library!", .{raw_mesh.materials[0].material});
-                    return error.InvalidMaterial;
-                };
-                log.debug("Converting raw material '{s}': {}", .{ raw_mesh.materials[0].material, raw_material });
-
-                const material = gpu.Material{};
-
-                log.debug("Loaded material '{s}': {}", .{ raw_mesh.materials[0].material, material });
-                break :outer material;
-            } else gpu.Material{};
 
             // Create our and upload data to our buffers.
             fz.replace(@src(), "upload data");
@@ -194,8 +135,8 @@ pub const Model = struct {
                 allocator,
                 device,
                 &tbuf,
-                IndexType,
-                indices,
+                u32,
+                @ptrCast(indices),
                 "Mesh Index Buffer",
                 c.SDL_GPU_BUFFERUSAGE_INDEX,
             );
@@ -211,16 +152,15 @@ pub const Model = struct {
 
             mesh.* = .{
                 .name = try allocator.dupe(u8, mesh_name),
-                .material = material,
-                .index_len = indices.len,
+                .material = raw_mesh.material,
+                .face_count = indices.len,
                 .index_buffer = index_buffer,
                 .fragment_normals_len = fragment_normals.len,
                 .fragment_normals_buffer = fragment_normals_buffer,
             };
 
-            log.debug("Loaded mesh '{s}' with {} verticies and {} indices.", .{
+            log.debug("Loaded mesh '{s}' with {} indices.", .{
                 meshes[mesh_idx].name,
-                vertices.len,
                 indices.len,
             });
         }
@@ -303,16 +243,17 @@ pub const Model = struct {
             try gpu.Bindings.FRAGMENT_NORMALS.bind(rpass, &mesh.fragment_normals_buffer, 0);
 
             // Bind our vertex and index buffers.
-            try rpass.bindBuffer(IndexType, .Index, 0, &mesh.index_buffer, 0);
+            try rpass.bindBuffer(u32, .Index, 0, &mesh.index_buffer, 0);
 
             // Push a render call to the pass.
             fz.replace(@src(), "draw");
-            rpass.drawIndexedPrimitives(@intCast(mesh.index_len), 1, 0, 0, 0);
+            rpass.drawIndexedPrimitives(@intCast(mesh.face_count * 3), 1, 0, 0, 0);
         }
     }
 };
 
-// -- Helper Functions -- //
+// -- OBJ Loading -- //
+// TODO: Rewrite to be pure zig.
 
 const obj = @import("obj");
 
@@ -326,148 +267,262 @@ fn loadOBJFromBytesDeprecated(allocator: std.mem.Allocator, obj_data: []const u8
     return .{ try obj.parseObj(allocator, obj_data), try obj.parseMtl(allocator, mtl_data) };
 }
 
-const OBJModel = struct {};
+const OBJModel = struct {
+    vertices: [][3]f32,
+    normals: [][3]f32,
+    meshes: []Mesh,
 
-const FileReaderContext = struct { obj_data: []const u8, mtl_data: []const u8 };
-export fn tinyobj_file_reader_callback(
-    /// User provided context.
-    ctx: ?*anyopaque,
-    /// Filename to be loaded, without a file extension.
-    _: [*c]const u8,
-    is_mtl: c_int,
-    /// `.obj` filename. Useful when you load `.mtl` from same location of `.obj`.
-    /// When the callback is called to load `.obj`, `filename` and `obj_filename` are same.
-    _: [*c]const u8,
-    /// Content of loaded file
-    buf: [*c][*c]u8,
-    /// Size of content(file)
-    len: [*c]usize,
-) callconv(.c) void {
-    const ctx_: *const FileReaderContext = @ptrCast(@alignCast(ctx.?));
-    const data = if (is_mtl == 1) ctx_.mtl_data else ctx_.obj_data;
-
-    buf.* = @constCast(@ptrCast(data.ptr));
-    len.* = data.len;
-}
-
-/// Parses an `.obj` model and `.mtl` material library from bytes.
-fn loadOBJFromBytes(allocator: std.mem.Allocator, obj_data: []const u8, mtl_data: []const u8) !OBJModel {
-    var fz = FZ.init(@src(), "loadOBJFromBytes");
-    defer fz.end();
-
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    var attrib: c.tinyobj_attrib_t = undefined;
-    var shapes: [*c]c.tinyobj_shape_t = null;
-    var num_shapes: usize = undefined;
-    var materials: [*c]c.tinyobj_shape_t = null;
-    var num_materials: usize = undefined;
-
-    const flags = c.TINYOBJ_FLAG_TRIANGULATE;
-
-    const ret = c.tinyobj_parse_obj(
-        &attrib,
-        &shapes,
-        &num_shapes,
-        &materials,
-        &num_materials,
-        "<unused filename>",
-        tinyobj_file_reader_callback,
-        @constCast(@ptrCast(&FileReaderContext{ .obj_data = obj_data, .mtl_data = mtl_data })),
-        flags,
-    );
-
-    log.debug("`tinyobj_parse_obj` returned {}.", .{ret});
-
-    return switch (ret) {
-        c.TINYOBJ_SUCCESS => outer: {
-            log.debug("Successfully parsed .obj model!", .{});
-            log.debug("Model Attributes: {}", .{attrib});
-            log.debug("Vertices: {any}", .{attrib.vertices[0..attrib.num_vertices]});
-            break :outer error.Success;
-        },
-        c.TINYOBJ_ERROR_EMPTY => error.TinyObjEmpty,
-        c.TINYOBJ_ERROR_INVALID_PARAMETER => error.TinyObjInvalidParameter,
-        c.TINYOBJ_ERROR_FILE_OPERATION => error.TinyObjFileOperation,
-        else => unreachable,
+    pub const Mesh = struct {
+        name: ?[]const u8 = null,
+        indices: [][3]u32,
+        material: gpu.Material = .{},
     };
-}
 
-test "loadObjFromBytes" {
-    const @"cube.obj" =
-        \\ # https://gist.github.com/noonat/1131091
-        \\ # cube.obj
-        \\ #
-        \\ 
-        \\ o cube
-        \\ mtllib cube.mtl
-        \\ 
-        \\ v -0.500000 -0.500000 0.500000
-        \\ v 0.500000 -0.500000 0.500000
-        \\ v -0.500000 0.500000 0.500000
-        \\ v 0.500000 0.500000 0.500000
-        \\ v -0.500000 0.500000 -0.500000
-        \\ v 0.500000 0.500000 -0.500000
-        \\ v -0.500000 -0.500000 -0.500000
-        \\ v 0.500000 -0.500000 -0.500000
-        \\ 
-        \\ vt 0.000000 0.000000
-        \\ vt 1.000000 0.000000
-        \\ vt 0.000000 1.000000
-        \\ vt 1.000000 1.000000
-        \\ 
-        \\ vn 0.000000 0.000000 1.000000
-        \\ vn 0.000000 1.000000 0.000000
-        \\ vn 0.000000 0.000000 -1.000000
-        \\ vn 0.000000 -1.000000 0.000000
-        \\ vn 1.000000 0.000000 0.000000
-        \\ vn -1.000000 0.000000 0.000000
-        \\ 
-        \\ g cube
-        \\ usemtl cube
-        \\ s 1
-        \\ f 1/1/1 2/2/1 3/3/1
-        \\ f 3/3/1 2/2/1 4/4/1
-        \\ s 2
-        \\ f 3/1/2 4/2/2 5/3/2
-        \\ f 5/3/2 4/2/2 6/4/2
-        \\ s 3
-        \\ f 5/4/3 6/3/3 7/2/3
-        \\ f 7/2/3 6/3/3 8/1/3
-        \\ s 4
-        \\ f 7/1/4 8/2/4 1/3/4
-        \\ f 1/3/4 8/2/4 2/4/4
-        \\ s 5
-        \\ f 2/1/5 8/2/5 4/3/5
-        \\ f 4/3/5 8/2/5 6/4/5
-        \\ s 6
-        \\ f 7/1/6 1/2/6 5/3/6
-        \\ f 5/3/6 1/2/6 3/4/6
-    ;
+    pub fn deinit(model: *const OBJModel, allocator: std.mem.Allocator) void {
+        allocator.free(model.vertices);
+        allocator.free(model.normals);
+        for (model.meshes) |*mesh| {
+            if (mesh.name) |n| allocator.free(n);
+            allocator.free(mesh.indices);
+        }
+        allocator.free(model.meshes);
+    }
+};
 
-    const @"cube.mtl" =
-        \\ newmtl cube
-        \\ Ns 10.0000
-        \\ Ni 1.5000
-        \\ d 1.0000
-        \\ Tr 0.0000
-        \\ Tf 1.0000 1.0000 1.0000 
-        \\ illum 2
-        \\ Ka 0.0000 0.0000 0.0000
-        \\ Kd 0.5880 0.5880 0.5880
-        \\ Ks 0.0000 0.0000 0.0000
-        \\ Ke 0.0000 0.0000 0.0000
-        // \\ map_Ka cube.png
-        // \\ map_Kd cube.png
-    ;
+const TinjObjLoader = struct {
+    // -- (Safe) Types -- //
 
-    _ = loadOBJFromBytes(
-        std.testing.allocator,
-        @"cube.obj",
-        @"cube.mtl",
-    ) catch |e| {
+    /// Models are required to be triangulated.
+    const Attributes = struct {
+        /// (x, y, z)
+        vertices: [][3]f32,
+        /// (n_x, n_y, n_z)
+        normals: [][3]f32,
+        /// (t_x, t_y)
+        texcoords: [][2]f32,
+        /// For each face, [i_0, i_1, ..., i_n] where n is the number of indices for that face.
+        face_vertex_indices: [][3]u32,
+        /// For each face, [i_0, i_1, ..., i_n] where n is the number of indices for that face.
+        face_normal_indices: [][3]u32,
+        /// For each face, [i_0, i_1, ..., i_n] where n is the number of indices for that face.
+        face_texcoord_indices: [][3]u32,
+        /// One material per face.
+        face_material_ids: []u32,
+
+        pub fn deinit(attributes: *const Attributes, allocator: std.mem.Allocator) void {
+            allocator.free(attributes.vertices);
+            allocator.free(attributes.normals);
+            allocator.free(attributes.texcoords);
+            allocator.free(attributes.face_vertex_indices);
+            allocator.free(attributes.face_normal_indices);
+            allocator.free(attributes.face_texcoord_indices);
+            allocator.free(attributes.face_material_ids);
+        }
+
+        pub fn fromRaw(allocator: std.mem.Allocator, raw: *const c.tinyobj_attrib_t) !Attributes {
+            var fz = FZ.init(@src(), "TinyObjLoader.Attributes.fromRaw");
+            defer fz.end();
+
+            var self: Attributes = undefined;
+
+            // Copy vertices, normals, and texture coordinates into grouped arrays.
+            fz.push(@src(), "copy data");
+
+            // TODO:
+            // Is there any way for me to clean up this memory without the help
+            // of tinyobj (#define TINYOBJ_MALLOC)? I could keep this slice but
+            // then I couldn't free it properly with a zig allocator; granted
+            // any interop with FFI undermines that expectation.
+            // NOTE: These are beautiful lines imo
+            self.vertices = try allocator.dupe([3]f32, @ptrCast(raw.vertices[0 .. raw.num_vertices * 3]));
+            self.normals = try allocator.dupe([3]f32, @ptrCast(raw.normals[0 .. raw.num_normals * 3]));
+            self.texcoords = try allocator.dupe([2]f32, @ptrCast(raw.texcoords[0 .. raw.num_texcoords * 2]));
+
+            // For each face, group the respective indices.
+            const faces: [][3]c.tinyobj_vertex_index_t = @ptrCast(raw.faces[0..raw.num_faces]);
+
+            fz.replace(@src(), "copy indices");
+
+            self.face_vertex_indices = try allocator.alloc([3]u32, faces.len);
+            self.face_normal_indices = try allocator.alloc([3]u32, faces.len);
+            self.face_texcoord_indices = try allocator.alloc([3]u32, faces.len);
+            self.face_material_ids = try allocator.alloc(u32, faces.len);
+
+            // TODO: Chunk the data to process in parallel.
+            for (
+                faces,
+                self.face_vertex_indices,
+                self.face_normal_indices,
+                self.face_texcoord_indices,
+                self.face_material_ids,
+                0..,
+            ) |*indices, *v, *n, *t, *m, i| {
+                for (0..3) |j| {
+                    // TODO: We need to handle negative and invalid (TINYOBJ_INVALID_INDEX) indices.
+                    v.*[j] = @intCast(indices[j].v_idx);
+                    n.*[j] = @intCast(indices[j].vn_idx);
+                    t.*[j] = @intCast(indices[j].vt_idx);
+                }
+                m.* = @intCast(raw.material_ids[i]);
+            }
+
+            return self;
+        }
+    };
+
+    // -- File Readers -- //
+
+    const PassthroughFileReaderContext = struct { obj_data: []const u8, mtl_data: []const u8 };
+
+    /// Outputs the data passed in through `ctx`.
+    export fn passthroughFileReader(
+        /// User provided context.
+        ctx: ?*anyopaque,
+        /// Filename to be loaded, without a file extension.
+        _: [*c]const u8,
+        is_mtl: c_int,
+        /// `.obj` filename. Useful when you load `.mtl` from same location of `.obj`.
+        /// When the callback is called to load `.obj`, `filename` and `obj_filename` are same.
+        _: [*c]const u8,
+        /// Content of loaded file
+        buf: [*c][*c]u8,
+        /// Size of content(file)
+        len: [*c]usize,
+    ) callconv(.c) void {
+        const ctx_: *const PassthroughFileReaderContext = @ptrCast(@alignCast(ctx.?));
+        const data = if (is_mtl == 1) ctx_.mtl_data else ctx_.obj_data;
+
+        buf.* = @constCast(@ptrCast(data.ptr));
+        len.* = data.len;
+    }
+
+    // -- Loader -- //
+
+    /// Parses an `.obj` model and `.mtl` material library from bytes.
+    fn loadFromBytes(allocator: std.mem.Allocator, name: []const u8, raw_obj_data: []const u8, mtl_data: []const u8) !OBJModel {
+        var fz = FZ.init(@src(), "TinjObjLoader.loadFromBytes");
+        defer fz.end();
+
+        // Remove all non-face geometry elements (currently only lines).
+        const obj_data = try allocator.alloc(u8, raw_obj_data.len + 1);
+        defer allocator.free(obj_data);
+        {
+            var i: usize = 0;
+            var line_idx: usize = 0;
+            var lines = std.mem.splitScalar(u8, raw_obj_data, '\n');
+            while (lines.next()) |line| : (line_idx += 1) {
+                if (std.mem.startsWith(u8, line, "l")) {
+                    log.debug(
+                        "Model contains polyline on line {}; this is not currently supported and will be filtered out.",
+                        .{line_idx},
+                    );
+                    continue;
+                } // Polylines
+                @memcpy(obj_data[i .. i + line.len], line);
+                obj_data[i + line.len] = '\n';
+                i += line.len + 1;
+            }
+        }
+
+        // Parse the model and material library.
+        const parsing_start = std.time.milliTimestamp();
+        const attributes: Attributes, const shapes: []c.tinyobj_shape_t, const materials: []c.tinyobj_material_t = outer: {
+            fz.push(@src(), "parsing");
+            var attrib: c.tinyobj_attrib_t = undefined;
+            defer c.tinyobj_attrib_free(&attrib);
+            var shapes: [*c]c.tinyobj_shape_t = null;
+            var num_shapes: usize = undefined;
+            var materials: [*c]c.tinyobj_material_t = null;
+            var num_materials: usize = undefined;
+
+            const flags = c.TINYOBJ_FLAG_TRIANGULATE;
+
+            const ret = c.tinyobj_parse_obj(
+                &attrib,
+                &shapes,
+                &num_shapes,
+                &materials,
+                &num_materials,
+                "<unused filename>",
+                passthroughFileReader,
+                @constCast(@ptrCast(&PassthroughFileReaderContext{ .obj_data = obj_data, .mtl_data = mtl_data })),
+                flags,
+            );
+
+            switch (ret) {
+                c.TINYOBJ_SUCCESS => {},
+                c.TINYOBJ_ERROR_EMPTY => return error.TinyObjEmpty,
+                c.TINYOBJ_ERROR_INVALID_PARAMETER => return error.TinyObjInvalidParameter,
+                c.TINYOBJ_ERROR_FILE_OPERATION => return error.TinyObjFileOperation,
+                else => unreachable,
+            }
+
+            fz.replace(@src(), "safety-ing");
+            break :outer .{ try Attributes.fromRaw(allocator, &attrib), shapes[0..num_shapes], materials[0..num_materials] };
+        };
+        defer attributes.deinit(allocator);
+        defer c.tinyobj_shapes_free(shapes.ptr, shapes.len);
+        defer c.tinyobj_materials_free(materials.ptr, materials.len);
+
+        log.debug(
+            "Parsed .obj model '{s}' in {} ms ({} vertices, {} faces).",
+            .{ name, std.time.milliTimestamp() - parsing_start, attributes.vertices.len, attributes.face_vertex_indices.len },
+        );
+
+        // Copy the data to the proper places.
+        fz.replace(@src(), "copy data");
+
+        // TODO: This is unnecessary but allows for easier deinitialization.
+        const vertices = try allocator.dupe([3]f32, attributes.vertices);
+
+        // TODO: We store the normals per vertex instead of per index.
+        // TODO: I don't see a scenario were a normal (laugh.) model wouldn't do this.
+        const normals = try allocator.alloc([3]f32, vertices.len);
+        const vertices_normal_mask = try allocator.alloc(bool, normals.len);
+        defer allocator.free(vertices_normal_mask);
+
+        const meshes = try allocator.alloc(OBJModel.Mesh, shapes.len);
+
+        for (meshes, shapes) |*mesh, *shape| {
+            fz.push(@src(), "copy indices");
+            defer fz.pop();
+
+            if (shape.name != null) mesh.name = try allocator.dupe(u8, std.mem.span(shape.name));
+
+            const offset = shape.face_offset;
+            mesh.indices = try allocator.dupe([3]u32, attributes.face_vertex_indices[offset .. offset + shape.length]);
+
+            // TODO: We are _only_ using the material of the first face in this shape.
+            const material = materials[@intCast(attributes.face_material_ids[offset])];
+            mesh.material = .{
+                .ambientColor = material.ambient,
+                .diffuseColor = material.diffuse,
+                .specularColor = material.specular,
+                .specularExponent = material.shininess,
+            };
+            // const texcoords = try allocator.alloc(f32, faces.len);
+
+            for (mesh.indices, attributes.face_normal_indices[offset .. offset + shape.length]) |v_idx, vn_idx| {
+                for (0..3) |i| {
+                    if (!vertices_normal_mask[v_idx[i]]) {
+                        normals[v_idx[i]] = attributes.normals[vn_idx[i]];
+                        vertices_normal_mask[v_idx[i]] = true;
+                    }
+                }
+            }
+        }
+
+        return OBJModel{ .vertices = vertices, .normals = normals, .meshes = meshes };
+    }
+};
+
+test "TinjObjLoader.loadFromBytes" {
+    const obj_data = @embedFile("assets/models/2021-Lamborghini-Countac [Lexyc16]/Countac.obj");
+    const mtl_data = @embedFile("assets/models/2021-Lamborghini-Countac [Lexyc16]/Countac.mtl");
+
+    const model = TinjObjLoader.loadFromBytes(std.testing.allocator, "Lambo", obj_data, mtl_data) catch |e| {
         std.debug.print("Error: {}\n", .{e});
         return;
     };
+    defer model.deinit(std.testing.allocator);
 }
