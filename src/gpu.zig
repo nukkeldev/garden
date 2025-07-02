@@ -1,4 +1,5 @@
 const SDL = @import("ffi.zig").SDL;
+const c = @import("ffi.zig").c;
 
 // -- Submodules -- //
 
@@ -59,6 +60,28 @@ pub const Bindings = struct {
         }
     };
 
+    pub const TextureBinding = struct {
+        stage: SDL.ShaderStage,
+        slot: u32,
+
+        pub fn bind(
+            comptime binding: TextureBinding,
+            rpass: *const SDL.GPURenderPass,
+            texture: *const SDL.GPUTexture,
+            sampler: *const SDL.GPUSampler,
+        ) void {
+            const sampler_binding = c.SDL_GPUTextureSamplerBinding{
+                .texture = texture.handle,
+                .sampler = sampler.handle,
+            };
+
+            switch (binding.stage) {
+                .Vertex => c.SDL_BindGPUVertexSamplers(rpass.handle, binding.slot, &sampler_binding, 1),
+                .Fragment => c.SDL_BindGPUFragmentSamplers(rpass.handle, binding.slot, &sampler_binding, 1),
+            }
+        }
+    };
+
     // -- Bindings -- //
 
     // Vertex
@@ -80,11 +103,16 @@ pub const Bindings = struct {
     pub const FRAGMENT_NORMALS = BufferBinding{
         .type = [4]f32,
         .stage = .Fragment,
-        .slot = 0,
+        .slot = 1,
     };
 
     pub const PER_MESH_FRAGMENT_DATA = UniformBinding{
         .type = PerMeshFragmentData,
+        .stage = .Fragment,
+        .slot = 0,
+    };
+
+    pub const DIFFUSE_MAP = TextureBinding{
         .stage = .Fragment,
         .slot = 0,
     };
@@ -123,6 +151,7 @@ pub const PerFrameVertexData = extern struct {
 pub const VertexInput = extern struct {
     position: [3]f32,
     normal: [3]f32,
+    texcoord: [2]f32,
 };
 
 // Material

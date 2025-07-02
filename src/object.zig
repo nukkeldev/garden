@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const zm = @import("zm");
+const img = @import("img");
 
 const gpu = @import("gpu.zig");
 const trace = @import("trace.zig");
@@ -10,10 +11,15 @@ const SDL = @import("ffi.zig").SDL;
 const DynamicTransform = @import("transform.zig").DynamicTransform;
 
 const FZ = trace.FnZone;
+const Image = img.Image;
+
+const MAX_U32 = std.math.maxInt(u32);
 
 const log = std.log.scoped(.object);
 
 pub const Model = struct {
+    allocator: std.mem.Allocator,
+
     name: []const u8,
     transform: DynamicTransform,
 
@@ -21,17 +27,28 @@ pub const Model = struct {
     vertex_buffer: SDL.GPUBuffer,
     meshes: []Mesh,
 
+    sampler: SDL.GPUSampler,
+
     // -- Types -- //
 
     pub const Mesh = struct {
         name: []const u8,
-        material: gpu.Material,
+        material: Material,
 
         face_count: usize,
         index_buffer: SDL.GPUBuffer,
 
         fragment_normals_len: usize,
         fragment_normals_buffer: SDL.GPUBuffer,
+    };
+
+    pub const Material = struct {
+        gpu: gpu.Material,
+        textures: std.AutoHashMap(MapType, SDL.GPUTexture),
+
+        pub const MapType = enum {
+            Diffuse,
+        };
     };
 
     // -- Initialization -- //
@@ -44,6 +61,7 @@ pub const Model = struct {
         transform: DynamicTransform,
         model_data: []const u8,
         material_lib_data: []const u8,
+        textures: std.StringHashMap(Image),
     ) !Model {
         var fz = FZ.init(@src(), "initFromEmbeddedObj");
         defer fz.end();
@@ -54,6 +72,13 @@ pub const Model = struct {
         fz.push(@src(), "parse model");
         const model = try TinjObjLoader.loadFromBytes(allocator, name, model_data, material_lib_data);
         defer model.deinit(allocator);
+
+        log.debug("Loaded model '{s}' with {} vertices, {} normals, and {} texcoords.", .{
+            name,
+            model.vertices.len,
+            model.normals.len,
+            model.texcoords.len,
+        });
 
         // Allocate places for us to store our re-computed meshes.
         fz.replace(@src(), "alloc meshes");
@@ -69,6 +94,7 @@ pub const Model = struct {
             vertex.* = .{
                 .position = model.vertices[i],
                 .normal = model.normals[i],
+                .texcoord = model.texcoords[i],
             };
         }
 
@@ -84,6 +110,17 @@ pub const Model = struct {
                 mesh.indices.len * @sizeOf([4]f32),
                 max_tbuf_len,
             );
+        }
+
+        {
+            var tex_iter = textures.valueIterator();
+            while (tex_iter.next()) |v| {
+                try v.convert(.rgba32);
+                max_tbuf_len = @max(
+                    v.imageByteSize(),
+                    max_tbuf_len,
+                );
+            }
         }
 
         const tbuf: SDL.GPUTransferBuffer(.Upload) = try .create(
@@ -131,7 +168,8 @@ pub const Model = struct {
             // Create our and upload data to our buffers.
             fz.replace(@src(), "upload data");
 
-            const index_buffer = try cpass.createAndUploadDataToBuffer(
+            const index_buffer = try SDL.GPUBuffer.createAndUploadData(
+                &cpass,
                 allocator,
                 device,
                 &tbuf,
@@ -140,7 +178,8 @@ pub const Model = struct {
                 "Mesh Index Buffer",
                 c.SDL_GPU_BUFFERUSAGE_INDEX,
             );
-            const fragment_normals_buffer = try cpass.createAndUploadDataToBuffer(
+            const fragment_normals_buffer = try SDL.GPUBuffer.createAndUploadData(
+                &cpass,
                 allocator,
                 device,
                 &tbuf,
@@ -150,9 +189,48 @@ pub const Model = struct {
                 c.SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
             );
 
+            fz.replace(@src(), "create material and load textures");
+            var material = Material{
+                .gpu = gpu.Material{
+                    .ambientColor = raw_mesh.material.diffuse,
+                    .diffuseColor = raw_mesh.material.diffuse,
+                    .specularColor = raw_mesh.material.diffuse,
+                    .specularExponent = raw_mesh.material.shininess,
+                },
+                .textures = .init(allocator),
+            };
+            {
+                const image = outer: {
+                    if (raw_mesh.material.diffuse_texname != null) {
+                        const file = std.fs.path.basename(std.mem.span(raw_mesh.material.diffuse_texname));
+                        log.debug("Loading diffuse map: {s}", .{file});
+                        if (textures.getPtr(file)) |f| break :outer f;
+                    }
+
+                    const pixels: [4]f32 = .{
+                        raw_mesh.material.diffuse[0],
+                        raw_mesh.material.diffuse[1],
+                        raw_mesh.material.diffuse[2],
+                        1.0,
+                    };
+                    var image = try Image.fromRawPixels(allocator, 1, 1, @ptrCast(&pixels), .float32);
+                    try image.convert(.rgba32);
+                    break :outer &image;
+                };
+
+                const diffuse_map = try SDL.GPUTexture.createAndUploadImage(
+                    &cpass,
+                    allocator,
+                    device,
+                    &tbuf,
+                    image,
+                    "Diffuse Texture",
+                );
+                try material.textures.put(.Diffuse, diffuse_map);
+            }
             mesh.* = .{
                 .name = try allocator.dupe(u8, mesh_name),
-                .material = raw_mesh.material,
+                .material = material,
                 .face_count = indices.len,
                 .index_buffer = index_buffer,
                 .fragment_normals_len = fragment_normals.len,
@@ -167,7 +245,8 @@ pub const Model = struct {
 
         // Upload our vertices.
         fz.replace(@src(), "upload vertices");
-        const vertex_buffer: SDL.GPUBuffer = try cpass.createAndUploadDataToBuffer(
+        const vertex_buffer: SDL.GPUBuffer = try SDL.GPUBuffer.createAndUploadData(
+            &cpass,
             allocator,
             device,
             &tbuf,
@@ -177,17 +256,31 @@ pub const Model = struct {
             c.SDL_GPU_BUFFERUSAGE_VERTEX,
         );
 
+        // Create our texture sampler.
+        // TODO: Adjust the properties to work in _most_ cases or expose the configuration.
+        fz.replace(@src(), "create sampler");
+        const sampler = try SDL.GPUSampler.create(allocator, device, "Texture Sampler", .{
+            .min_filter = c.SDL_GPU_FILTER_NEAREST,
+            .mag_filter = c.SDL_GPU_FILTER_NEAREST,
+            .mipmap_mode = c.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST,
+            .address_mode_u = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+            .address_mode_v = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+            .address_mode_w = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+        });
+
         fz.replace(@src(), "submit cpass");
         cpass.end();
         try cmd.submit();
 
         log.info("Loaded model '{s}'.", .{name});
         return Model{
+            .allocator = allocator,
             .name = name,
             .transform = transform,
             .vertex_len = vertices.len,
             .vertex_buffer = vertex_buffer,
             .meshes = meshes,
+            .sampler = sampler,
         };
     }
 
@@ -233,7 +326,7 @@ pub const Model = struct {
 
             const pmfd = gpu.PerMeshFragmentData{
                 .normalMat = normal_matrix.data,
-                .material = mesh.material,
+                .material = mesh.material.gpu,
             };
 
             // Bind our uniforms and storage buffers.
@@ -241,6 +334,9 @@ pub const Model = struct {
             try gpu.Bindings.PER_MESH_VERTEX_DATA.bind(cmd, &pmvd);
             try gpu.Bindings.PER_MESH_FRAGMENT_DATA.bind(cmd, &pmfd);
             try gpu.Bindings.FRAGMENT_NORMALS.bind(rpass, &mesh.fragment_normals_buffer, 0);
+
+            // Bind textures.
+            gpu.Bindings.DIFFUSE_MAP.bind(rpass, mesh.material.textures.getPtr(.Diffuse).?, &model.sampler);
 
             // Bind our vertex and index buffers.
             try rpass.bindBuffer(u32, .Index, 0, &mesh.index_buffer, 0);
@@ -270,17 +366,20 @@ fn loadOBJFromBytesDeprecated(allocator: std.mem.Allocator, obj_data: []const u8
 const OBJModel = struct {
     vertices: [][3]f32,
     normals: [][3]f32,
+    texcoords: [][2]f32,
     meshes: []Mesh,
+    __raw_materials: []c.tinyobj_material_t,
 
     pub const Mesh = struct {
         name: ?[]const u8 = null,
         indices: [][3]u32,
-        material: gpu.Material = .{},
+        material: c.tinyobj_material_t,
     };
 
     pub fn deinit(model: *const OBJModel, allocator: std.mem.Allocator) void {
         allocator.free(model.vertices);
         allocator.free(model.normals);
+        allocator.free(model.texcoords);
         for (model.meshes) |*mesh| {
             if (mesh.name) |n| allocator.free(n);
             allocator.free(mesh.indices);
@@ -288,6 +387,16 @@ const OBJModel = struct {
         allocator.free(model.meshes);
     }
 };
+
+pub fn embedTextureMap(allocator: std.mem.Allocator, comptime root: []const u8, comptime files: []const []const u8) !std.StringHashMap(Image) {
+    var map = std.StringHashMap(Image).init(allocator);
+    inline for (files) |file| {
+        var image = try Image.fromMemory(allocator, @embedFile(root ++ std.fs.path.sep_str ++ file));
+        try image.convert(.rgba32);
+        try map.put(file, image);
+    }
+    return map;
+}
 
 const TinjObjLoader = struct {
     // -- (Safe) Types -- //
@@ -358,7 +467,13 @@ const TinjObjLoader = struct {
                 0..,
             ) |*indices, *v, *n, *t, *m, i| {
                 for (0..3) |j| {
-                    // TODO: We need to handle negative and invalid (TINYOBJ_INVALID_INDEX) indices.
+                    if (indices[j].v_idx == c.TINYOBJ_INVALID_INDEX or indices[j].v_idx < 0 or
+                        indices[j].vn_idx == c.TINYOBJ_INVALID_INDEX or indices[j].vn_idx < 0 or
+                        indices[j].vt_idx == c.TINYOBJ_INVALID_INDEX or indices[j].vt_idx < 0)
+                    {
+                        log.warn("TODO: Index {} contains an invalid or negative index!", .{i * 3 + j});
+                    }
+
                     v.*[j] = @intCast(indices[j].v_idx);
                     n.*[j] = @intCast(indices[j].vn_idx);
                     t.*[j] = @intCast(indices[j].vt_idx);
@@ -462,11 +577,17 @@ const TinjObjLoader = struct {
         };
         defer attributes.deinit(allocator);
         defer c.tinyobj_shapes_free(shapes.ptr, shapes.len);
-        defer c.tinyobj_materials_free(materials.ptr, materials.len);
 
         log.debug(
-            "Parsed .obj model '{s}' in {} ms ({} vertices, {} faces).",
-            .{ name, std.time.milliTimestamp() - parsing_start, attributes.vertices.len, attributes.face_vertex_indices.len },
+            "Parsed .obj model '{s}' in {} ms ({} vertices, {} faces, {} normals, {} texcoords).",
+            .{
+                name,
+                std.time.milliTimestamp() - parsing_start,
+                attributes.vertices.len,
+                attributes.face_vertex_indices.len,
+                attributes.normals.len,
+                attributes.texcoords.len,
+            },
         );
 
         // Copy the data to the proper places.
@@ -475,9 +596,8 @@ const TinjObjLoader = struct {
         // TODO: This is unnecessary but allows for easier deinitialization.
         const vertices = try allocator.dupe([3]f32, attributes.vertices);
 
-        // TODO: We store the normals per vertex instead of per index.
-        // TODO: I don't see a scenario were a normal (laugh.) model wouldn't do this.
         const normals = try allocator.alloc([3]f32, vertices.len);
+        const texcoords = try allocator.alloc([2]f32, vertices.len);
         const vertices_normal_mask = try allocator.alloc(bool, normals.len);
         defer allocator.free(vertices_normal_mask);
 
@@ -494,25 +614,24 @@ const TinjObjLoader = struct {
 
             // TODO: We are _only_ using the material of the first face in this shape.
             const material = materials[@intCast(attributes.face_material_ids[offset])];
-            mesh.material = .{
-                .ambientColor = material.ambient,
-                .diffuseColor = material.diffuse,
-                .specularColor = material.specular,
-                .specularExponent = material.shininess,
-            };
-            // const texcoords = try allocator.alloc(f32, faces.len);
+            mesh.material = material;
 
-            for (mesh.indices, attributes.face_normal_indices[offset .. offset + shape.length]) |v_idx, vn_idx| {
+            for (
+                mesh.indices,
+                attributes.face_normal_indices[offset .. offset + shape.length],
+                attributes.face_texcoord_indices[offset .. offset + shape.length],
+            ) |v_idx, vn_idx, vt_idx| {
                 for (0..3) |i| {
                     if (!vertices_normal_mask[v_idx[i]]) {
                         normals[v_idx[i]] = attributes.normals[vn_idx[i]];
+                        texcoords[v_idx[i]] = attributes.texcoords[vt_idx[i]];
                         vertices_normal_mask[v_idx[i]] = true;
                     }
                 }
             }
         }
 
-        return OBJModel{ .vertices = vertices, .normals = normals, .meshes = meshes };
+        return OBJModel{ .vertices = vertices, .normals = normals, .texcoords = texcoords, .__raw_materials = materials, .meshes = meshes };
     }
 };
 

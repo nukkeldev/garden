@@ -740,48 +740,6 @@ pub const SDL = struct {
 
             log.debug("GPU Device's allowed frames in flight changed to {}.", .{allowed_frames_in_flight});
         }
-
-        // -- Usage -- //
-
-        /// [SDL_CreateGPUTexture](https://wiki.libsdl.org/SDL3/SDL_CreateGPUTexture):
-        /// Creates a texture object to be used in graphics or compute workflows.
-        ///
-        /// The contents of this texture are undefined until data is written to the texture.
-        ///
-        /// Note that certain combinations of usage flags are invalid. For example, a texture cannot have both the
-        /// `SAMPLER` and `GRAPHICS_STORAGE_READ` flags.
-        ///
-        /// If you request a sample count higher than the hardware supports, the implementation will automatically fall
-        /// back to the highest available sample count.
-        ///
-        /// There are optional properties that can be provided through `SDL_GPUTextureCreateInfo`'s props. These are the
-        /// supported properties:
-        ///
-        ///     `SDL_PROP_GPU_TEXTURE_CREATE_D3D12_CLEAR_R_FLOAT`: (Direct3D 12 only) if the texture usage is
-        ///         `SDL_GPU_TEXTUREUSAGE_COLOR_TARGET`, clear the texture to a color with this red intensity.
-        ///         Defaults to zero.
-        ///     `SDL_PROP_GPU_TEXTURE_CREATE_D3D12_CLEAR_G_FLOAT`: (Direct3D 12 only) if the texture usage is
-        ///         `SDL_GPU_TEXTUREUSAGE_COLOR_TARGET`, clear the texture to a color with this green intensity.
-        ///         Defaults to zero.
-        ///     `SDL_PROP_GPU_TEXTURE_CREATE_D3D12_CLEAR_B_FLOAT`: (Direct3D 12 only) if the texture usage is
-        ///         `SDL_GPU_TEXTUREUSAGE_COLOR_TARGET`, clear the texture to a color with this blue intensity.
-        ///         Defaults to zero.
-        ///     `SDL_PROP_GPU_TEXTURE_CREATE_D3D12_CLEAR_A_FLOAT`: (Direct3D 12 only) if the texture usage is
-        ///         `SDL_GPU_TEXTUREUSAGE_COLOR_TARGET`, clear the texture to a color with this alpha intensity.
-        ///         Defaults to zero.
-        ///     `SDL_PROP_GPU_TEXTURE_CREATE_D3D12_CLEAR_DEPTH_FLOAT`: (Direct3D 12 only) if the texture usage is
-        ///         `SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET`, clear the texture to a depth of this value.
-        ///         Defaults to zero.
-        ///     `SDL_PROP_GPU_TEXTURE_CREATE_D3D12_CLEAR_STENCIL_NUMBER`: (Direct3D 12 only) if the texture usage is
-        ///         `SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET`, clear the texture to a stencil of this `u8` value.
-        ///         Defaults to zero.
-        ///     `SDL_PROP_GPU_TEXTURE_CREATE_NAME_STRING`: a name that can be displayed in debugging tools.
-        pub fn createTexture(device: *const GPUDevice, create_info: c.SDL_GPUTextureCreateInfo) !*c.SDL_GPUTexture {
-            return c.SDL_CreateGPUTexture(device.handle, &create_info) orelse {
-                err("CreateGPUTexture", "", .{}); // TODO: Fill in *CreateInfo fields.
-                return error.SDLError;
-            };
-        }
     };
 
     // Command Buffer
@@ -878,6 +836,141 @@ pub const SDL = struct {
                 .Vertex => c.SDL_PushGPUVertexUniformData(cmd.handle, slot, @ptrCast(data), @sizeOf(T)),
                 .Fragment => c.SDL_PushGPUFragmentUniformData(cmd.handle, slot, @ptrCast(data), @sizeOf(T)),
             }
+        }
+    };
+
+    // Textures
+
+    pub const GPUTexture = struct {
+        handle: *c.SDL_GPUTexture,
+
+        // -- Lifecycle -- //
+
+        /// [SDL_CreateGPUTexture](https://wiki.libsdl.org/SDL3/SDL_CreateGPUTexture):
+        /// Creates a texture object to be used in graphics or compute workflows.
+        ///
+        /// The contents of this texture are undefined until data is written to the texture.
+        ///
+        /// Note that certain combinations of usage flags are invalid. For example, a texture cannot have both the
+        /// `SAMPLER` and `GRAPHICS_STORAGE_READ` flags.
+        ///
+        /// If you request a sample count higher than the hardware supports, the implementation will automatically fall
+        /// back to the highest available sample count.
+        ///
+        /// There are optional properties that can be provided through `SDL_GPUTextureCreateInfo`'s props. These are the
+        /// supported properties:
+        ///
+        ///     `SDL_PROP_GPU_TEXTURE_CREATE_D3D12_CLEAR_R_FLOAT`: (Direct3D 12 only) if the texture usage is
+        ///         `SDL_GPU_TEXTUREUSAGE_COLOR_TARGET`, clear the texture to a color with this red intensity.
+        ///         Defaults to zero.
+        ///     `SDL_PROP_GPU_TEXTURE_CREATE_D3D12_CLEAR_G_FLOAT`: (Direct3D 12 only) if the texture usage is
+        ///         `SDL_GPU_TEXTUREUSAGE_COLOR_TARGET`, clear the texture to a color with this green intensity.
+        ///         Defaults to zero.
+        ///     `SDL_PROP_GPU_TEXTURE_CREATE_D3D12_CLEAR_B_FLOAT`: (Direct3D 12 only) if the texture usage is
+        ///         `SDL_GPU_TEXTUREUSAGE_COLOR_TARGET`, clear the texture to a color with this blue intensity.
+        ///         Defaults to zero.
+        ///     `SDL_PROP_GPU_TEXTURE_CREATE_D3D12_CLEAR_A_FLOAT`: (Direct3D 12 only) if the texture usage is
+        ///         `SDL_GPU_TEXTUREUSAGE_COLOR_TARGET`, clear the texture to a color with this alpha intensity.
+        ///         Defaults to zero.
+        ///     `SDL_PROP_GPU_TEXTURE_CREATE_D3D12_CLEAR_DEPTH_FLOAT`: (Direct3D 12 only) if the texture usage is
+        ///         `SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET`, clear the texture to a depth of this value.
+        ///         Defaults to zero.
+        ///     `SDL_PROP_GPU_TEXTURE_CREATE_D3D12_CLEAR_STENCIL_NUMBER`: (Direct3D 12 only) if the texture usage is
+        ///         `SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET`, clear the texture to a stencil of this `u8` value.
+        ///         Defaults to zero.
+        ///     `SDL_PROP_GPU_TEXTURE_CREATE_NAME_STRING`: a name that can be displayed in debugging tools.
+        pub fn create(allocator: std.mem.Allocator, device: *const GPUDevice, name: []const u8, create_info: c.SDL_GPUTextureCreateInfo) !GPUTexture {
+            try setGlobalStringProperty(allocator, c.SDL_PROP_GPU_TEXTURE_CREATE_NAME_STRING, name);
+
+            var ci = create_info;
+            ci.props = c.SDL_GetGlobalProperties();
+
+            return .{
+                .handle = c.SDL_CreateGPUTexture(device.handle, &ci) orelse {
+                    err("CreateGPUTexture", "", .{}); // TODO: Fill in *CreateInfo fields.
+                    return error.SDLError;
+                },
+            };
+        }
+
+        /// Creates a `GPUTexture` from an image.
+        pub fn createAndUploadImage(
+            cpass: *const GPUCopyPass,
+            allocator: std.mem.Allocator,
+            device: *const SDL.GPUDevice,
+            tbuf: *const SDL.GPUTransferBuffer(.Upload),
+            image: *const @import("img").Image,
+            name: []const u8,
+        ) !SDL.GPUTexture {
+            var fz = FZ.init(@src(), "SDL.GPUTexture.createAndUploadPNG");
+            defer fz.end();
+
+            log.debug("Loading {s} image '{s}' into GPUTexture.", .{ @tagName(image.pixelFormat()), name });
+
+            // Create the create_info and the texture.
+            const create_info = c.SDL_GPUTextureCreateInfo{
+                .type = c.SDL_GPU_TEXTURETYPE_2D,
+                .format = c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                .width = @intCast(image.width),
+                .height = @intCast(image.height),
+                .layer_count_or_depth = 1,
+                .num_levels = 1,
+                .sample_count = c.SDL_GPU_SAMPLECOUNT_1,
+                .usage = c.SDL_GPU_TEXTUREUSAGE_SAMPLER,
+            };
+
+            const texture: GPUTexture = try GPUTexture.create(
+                allocator,
+                device,
+                name,
+                create_info,
+            );
+
+            // Upload the image data to the texture.
+            try cpass.uploadImageToTexture(tbuf, device, &texture, image, true, false);
+
+            return texture;
+        }
+
+        /// [SDL_ReleaseGPUTexture](https://wiki.libsdl.org/SDL3/SDL_ReleaseGPUTexture):
+        /// Frees the given texture as soon as it is safe to do so.
+        ///
+        /// You must not reference the texture after calling this function.
+        pub fn release(texture: *const GPUTexture, device: *const GPUDevice) void {
+            c.SDL_ReleaseGPUTexture(device.handle, texture.handle);
+        }
+
+        // -- Usage -- //
+
+    };
+
+    pub const GPUSampler = struct {
+        handle: *c.SDL_GPUSampler,
+
+        // -- Lifecycle -- //
+
+        /// [SDL_CreateGPUSampler](https://wiki.libsdl.org/SDL3/SDL_CreateGPUSampler):
+        /// Creates a sampler object to be used when binding textures in a graphics workflow.
+        pub fn create(allocator: std.mem.Allocator, device: *const GPUDevice, name: []const u8, create_info: c.SDL_GPUSamplerCreateInfo) !GPUSampler {
+            try setGlobalStringProperty(allocator, c.SDL_PROP_GPU_SAMPLER_CREATE_NAME_STRING, name);
+
+            var ci = create_info;
+            ci.props = c.SDL_GetGlobalProperties();
+
+            return .{
+                .handle = c.SDL_CreateGPUSampler(device.handle, &ci) orelse {
+                    err("CreateGPUSampler", "", .{});
+                    return error.SDLError;
+                },
+            };
+        }
+
+        /// [SDL_ReleaseGPUSampler](https://wiki.libsdl.org/SDL3/SDL_ReleaseGPUSampler):
+        /// Frees the given sampler as soon as it is safe to do so.
+        ///
+        /// You must not reference the sampler after calling this function.
+        pub fn release(sampler: *const GPUSampler, device: *const GPUDevice) void {
+            c.SDL_ReleaseGPUSampler(device.handle, sampler.handle);
         }
     };
 
@@ -1047,10 +1140,9 @@ pub const SDL = struct {
         ///
         /// TODO: Offsets are hidden from the user for now, a future note may be to batch uploads into a single transfer
         /// buffer.
-        pub fn upload(
+        pub fn uploadBuffer(
             cpass: *const GPUCopyPass,
-            /// MUST be a GPUTransferBuffer(.Upload)
-            transfer_buffer: anytype,
+            tbuf: *const GPUTransferBuffer(.Upload),
             device: *const GPUDevice,
             to: *const GPUBuffer,
             comptime T: type,
@@ -1063,56 +1155,64 @@ pub const SDL = struct {
 
             // Check pre-conditions for upload.
             const data_size = data.len * @sizeOf(T);
-            if (!@TypeOf(transfer_buffer.*).isUpload()) {
-                log.err("Attempted to upload data to a buffer with a download transfer buffer...", .{});
-                return error.Idiot;
-            }
-
-            if (transfer_buffer.size < data_size) {
-                log.err("Transfer buffer size ({} bytes) is less than the size of the data ({} bytes)!", .{ transfer_buffer.size, data_size });
+            if (tbuf.size < data_size) {
+                log.err("Transfer buffer size ({} bytes) is less than the size of the data ({} bytes)!", .{ tbuf.size, data_size });
                 return error.TransferBufferSizeTooSmall;
             }
 
             // Transfer the data into the transfer buffer.
             fz.push(@src(), "memcpy");
-            @memcpy(try transfer_buffer.map(T, device, cycle_tbuf), data);
-            transfer_buffer.unmap(device);
+            @memcpy(try tbuf.map(T, device, cycle_tbuf), data);
+            tbuf.unmap(device);
             fz.pop();
 
             // Upload the transfer buffer to the buffer.
             c.SDL_UploadToGPUBuffer(
                 cpass.handle,
-                &.{ .transfer_buffer = transfer_buffer.handle, .offset = 0 },
+                &.{ .transfer_buffer = tbuf.handle, .offset = 0 },
                 &.{ .buffer = to.handle, .offset = 0, .size = @intCast(data_size) },
                 cycle_buf,
             );
         }
 
-        /// Creates a `GPUBuffer` and uploads data to it.
-        /// Primarily intended for static data such as geometry.
-        pub fn createAndUploadDataToBuffer(
+        /// [SDL_UploadToGPUTexture](https://wiki.libsdl.org/SDL3/SDL_UploadToGPUTexture):
+        /// Uploads data from a transfer buffer to a texture [except the usage of transfer buffers are elided].
+        ///
+        /// The upload occurs on the GPU timeline. You may assume that the upload has finished in subsequent commands.
+        ///
+        /// You must align the data in the transfer buffer to a multiple of the texel size of the texture format.
+        pub fn uploadImageToTexture(
             cpass: *const GPUCopyPass,
-            allocator: std.mem.Allocator,
-            device: *const SDL.GPUDevice,
-            tbuf: *const SDL.GPUTransferBuffer(.Upload),
-            comptime T: type,
-            data: []const T,
-            name: []const u8,
-            usage: c.SDL_GPUBufferUsageFlags,
-        ) !SDL.GPUBuffer {
-            var fz = FZ.init(@src(), "SDL.GPUCopyPass.createAndUploadDataToBuffer");
+            tbuf: *const GPUTransferBuffer(.Upload),
+            device: *const GPUDevice,
+            texture: *const GPUTexture,
+            image: *const @import("img").Image,
+            cycle_tbuf: bool,
+            cycle_tex: bool,
+        ) !void {
+            var fz = FZ.init(@src(), "SDL.GPUCopyPass.upload");
             defer fz.end();
 
-            const buffer: SDL.GPUBuffer = try SDL.GPUBuffer.create(
-                allocator,
-                device,
-                name,
-                usage,
-                @intCast(@sizeOf(T) * data.len),
-            );
-            try cpass.upload(tbuf, device, &buffer, T, data, true, false);
+            // Check pre-conditions for upload.
+            const data_size = image.imageByteSize();
+            if (tbuf.size < data_size) {
+                log.err("Transfer buffer size ({} bytes) is less than the size of the data ({} bytes)!", .{ tbuf.size, data_size });
+                return error.TransferBufferSizeTooSmall;
+            }
 
-            return buffer;
+            // Transfer the data into the transfer buffer.
+            fz.push(@src(), "memcpy");
+            @memcpy(try tbuf.map(u8, device, cycle_tbuf), image.rawBytes());
+            tbuf.unmap(device);
+            fz.pop();
+
+            // Upload the transfer buffer to the buffer.
+            c.SDL_UploadToGPUTexture(
+                cpass.handle,
+                &.{ .transfer_buffer = tbuf.handle, .offset = 0 },
+                &.{ .texture = texture.handle, .w = @intCast(image.width), .h = @intCast(image.height), .d = 1 },
+                cycle_tex,
+            );
         }
     };
 
@@ -1152,6 +1252,33 @@ pub const SDL = struct {
                     return error.SDLError;
                 },
             };
+        }
+
+        /// Creates a `GPUBuffer` and uploads data to it.
+        /// Primarily intended for static data such as geometry.
+        pub fn createAndUploadData(
+            cpass: *const GPUCopyPass,
+            allocator: std.mem.Allocator,
+            device: *const SDL.GPUDevice,
+            tbuf: *const SDL.GPUTransferBuffer(.Upload),
+            comptime T: type,
+            data: []const T,
+            name: []const u8,
+            usage: c.SDL_GPUBufferUsageFlags,
+        ) !SDL.GPUBuffer {
+            var fz = FZ.init(@src(), "SDL.GPUBuffer.createAndUploadData");
+            defer fz.end();
+
+            const buffer: SDL.GPUBuffer = try SDL.GPUBuffer.create(
+                allocator,
+                device,
+                name,
+                usage,
+                @intCast(@sizeOf(T) * data.len),
+            );
+            try cpass.uploadBuffer(tbuf, device, &buffer, T, data, true, false);
+
+            return buffer;
         }
 
         ///[SDL_ReleaseGPUBuffer](https://wiki.libsdl.org/SDL3/SDL_ReleaseGPUBuffer):

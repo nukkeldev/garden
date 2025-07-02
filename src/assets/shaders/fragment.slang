@@ -3,6 +3,10 @@ import "structs";
 // Bindings
 
 [[vk::binding(0, 2)]]
+Sampler2D diffuseMap;
+// SamplerState sampler;
+
+[[vk::binding(1, 2)]]
 StructuredBuffer<float4> fragmentNormals;
 [[vk::binding(0, 3)]]
 uniform ConstantBuffer<PerMeshFragmentData> pmd;
@@ -28,7 +32,7 @@ Fragment fragmentMain(
     Material material = pmd.material;
 
     // Ambient
-    float3 ambient = (ambientStrength * material.diffuseColor) * lightColor;
+    float3 ambient = (ambientStrength * material.ambientColor) * lightColor;
 
     // Diffuse
     float3 norm;
@@ -43,15 +47,18 @@ Fragment fragmentMain(
 
     float3 lightDirection = normalize(lightPosition - input.fragmentPosition);
     float diff = max(0.0, dot(norm, lightDirection));
-    float3 diffuse = (diff * material.diffuseColor) * lightColor;
+    float3 diffuseColor = diffuseMap.Sample(float2(input.texcoord.x, 1 - input.texcoord.y)).xyz;
+    float3 diffuse = (diff * diffuseColor) * lightColor;
 
     // Specular
     float3 viewDirection = normalize(viewPosition - input.fragmentPosition);
     float3 reflectedDirection = reflect(-lightDirection, norm);
     float spec = pow(max(dot(viewDirection, reflectedDirection), 0.0), material.specularExponent);
-    float3 specular = (specularity * spec * material.diffuseColor) * lightColor;
+    float3 specular = (specularity * spec * material.specularColor) * lightColor;
 
     Fragment output;
     output.color = float4(ambient + diffuse + specular, 1.0);
+    // output.color = float4(input.texcoord, 1, 1); // DEBUG TEXCOORDS
+    // output.color = float4(input.normalDirection * 0.5 + 0.5, 1.0); // DEBUG NORMALS
     return output;
 }

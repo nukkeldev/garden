@@ -6,10 +6,11 @@ const trace = @import("trace.zig");
 const gpu = @import("gpu.zig");
 const ffi = @import("ffi.zig");
 const log = @import("log.zig");
+const object = @import("object.zig");
 const c = ffi.c;
 
 const DynamicTransfrom = @import("transform.zig").DynamicTransform;
-const Model = @import("object.zig").Model;
+const Model = object.Model;
 const FZ = trace.FnZone;
 const SDL = ffi.SDL;
 
@@ -35,7 +36,7 @@ var MOVEMENT_SPEED: f32 = 4.0;
 const ZOOM_SPEED: f32 = 2;
 
 const MIN_FOV = 30.0;
-const INITIAL_FOV = 120.0;
+const INITIAL_FOV = 90.0;
 const MAX_FOV = 150.0;
 
 const PAN_SPEED: f32 = 2;
@@ -52,11 +53,11 @@ var device: SDL.GPUDevice = undefined;
 var im_context: *c.ImGuiContext = undefined;
 
 var pipeline: ?*c.SDL_GPUGraphicsPipeline = null;
-var depth_texture: *c.SDL_GPUTexture = undefined;
+var depth_texture: SDL.GPUTexture = undefined;
 
 var camera: DynamicTransfrom = .{
-    .translation = .{ 0, 3, -5 },
-    .rotation = .{ 0, std.math.degreesToRadians(90), 0 },
+    .translation = .{ -6.75, 4, -5.25 },
+    .rotation = .{ std.math.degreesToRadians(-45), std.math.degreesToRadians(45), 0 },
 };
 var car: Model = undefined;
 
@@ -103,11 +104,11 @@ fn init() !void {
 
     // Create the depth texture.
     fz.replace(@src(), "create depth texture");
-    const px_size = try window.getSizeInPixels();
-    depth_texture = try device.createTexture(.{
+    const size_px = try window.getSizeInPixels();
+    depth_texture = try SDL.GPUTexture.create(allocator, &device, "Depth Texture", .{
         .type = c.SDL_GPU_TEXTURETYPE_2D,
-        .width = px_size[0],
-        .height = px_size[1],
+        .width = size_px[0],
+        .height = size_px[1],
         .layer_count_or_depth = 1,
         .num_levels = 1,
         .sample_count = c.SDL_GPU_SAMPLECOUNT_1,
@@ -166,6 +167,22 @@ fn init() !void {
         .{},
         @embedFile("assets/models/2021-Lamborghini-Countac [Lexyc16]/Countac.obj"),
         @embedFile("assets/models/2021-Lamborghini-Countac [Lexyc16]/Countac.mtl"),
+        try object.embedTextureMap(
+            allocator,
+            "assets/models/2021-Lamborghini-Countac [Lexyc16]/textures",
+            &.{
+                "Lamborghini-text-logo-1440x900_baseColor.png",
+                "Material.001_baseColor.png",
+                "Material.002_baseColor.png",
+                "Material.002_metallicRoughness.png",
+                "Material.002_normal.png",
+                "Material.010_normal.png",
+                "Material.012_normal.png",
+                "Material.013_baseColor.png",
+                "Material.025_baseColor.jpeg",
+                "Material.029_baseColor.png",
+            },
+        ),
         // @embedFile("assets/models/cube/Cube.obj"),
         // @embedFile("assets/models/cube/Cube.mtl"),
     );
@@ -299,7 +316,7 @@ fn render(ticks_ns: u64) !void {
     };
 
     const depth_stencil_target_info = c.SDL_GPUDepthStencilTargetInfo{
-        .texture = depth_texture,
+        .texture = depth_texture.handle,
         .cycle = true,
         .clear_depth = 1,
         .clear_stencil = 0,
@@ -344,7 +361,7 @@ fn exit() !void {
     c.cImGui_ImplSDL3_Shutdown();
     c.ImGui_DestroyContext(null);
 
-    c.SDL_ReleaseGPUTexture(device.handle, depth_texture);
+    depth_texture.release(&device);
     c.SDL_ReleaseGPUGraphicsPipeline(device.handle, pipeline);
 
     for (models) |model| model.deinit(&device);
@@ -474,7 +491,12 @@ fn renderDebug(cmd: *const SDL.GPUCommandBuffer, rpass: *const SDL.GPURenderPass
         @mod(std.math.radiansToDegrees(camera.rotation[1]), 360),
         @mod(std.math.radiansToDegrees(camera.rotation[2]), 360),
     );
-    c.ImGui_Text("Velocity: (%.2f, %.2f, %.2f)", camera.translation[0], camera.translation[1], camera.translation[2]);
+    c.ImGui_Text(
+        "Velocity: (%.2f, %.2f, %.2f)",
+        camera.translational_velocity[0],
+        camera.translational_velocity[1],
+        camera.translational_velocity[2],
+    );
     c.ImGui_Text("FoV (deg): %.2f", fov);
     c.ImGui_SeparatorText("Mouse");
     c.ImGui_Text("Right Pressed: %d", right_mouse_pressed);

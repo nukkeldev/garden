@@ -16,6 +16,7 @@ VertexStageOutput vertexMain(VertexInput input)
 
     output.vertex.fragmentPosition = mul(pmd.model, float4(input.position, 1.0)).xyz;
     output.vertex.normalDirection = normalize(mul((float3x3)pmd.normalMat, input.normal));
+    output.vertex.texcoord = input.texcoord;
     output.sv_position = mul(pfd.view_proj, float4(output.vertex.fragmentPosition, 1.0));
 
     return output;

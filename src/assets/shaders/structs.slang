@@ -25,18 +25,21 @@ struct VertexInput
 {
     float3 position : POSITION;
     float3 normal : NORMAL;
+    float2 texcoord : TEXCOORD;
 };
 
 struct VertexOutput
 {
     float3 fragmentPosition;
     float3 normalDirection;
+    float2 texcoord;
 };
 
 struct VertexStageOutput
 {
     float4 sv_position : SV_Position;
     VertexOutput vertex : VertexOutput;
+    float2 texcoord : TEXCOORD;
 };
 
 // Fragment Data

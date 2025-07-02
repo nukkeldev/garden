@@ -46,9 +46,6 @@ pub fn build(b: *std.Build) !void {
     const zm = b.dependency("zm", .{});
     exe_mod.addImport("zm", zm.module("zm"));
 
-    const entt = b.dependency("entt", .{});
-    exe_mod.addImport("ecs", entt.module("zig-ecs"));
-
     const obj_mod = b.dependency("obj", .{ .target = target, .optimize = optimize }).module("obj");
     exe_mod.addImport("obj", obj_mod);
 
@@ -60,8 +57,11 @@ pub fn build(b: *std.Build) !void {
     exe_mod.addImport("ztracy", ztracy.module("root"));
     exe.linkLibrary(ztracy.artifact("tracy"));
 
+    const zigimg_mod = b.dependency("zigimg", .{}).module("zigimg");
+    exe_mod.addImport("img", zigimg_mod);
+
     {
-        const tinyobjloader = b.dependency("tinyobjloader", .{});
+        const tinyobjloader = b.dependency("tinyobjloader_c", .{});
         const wf = b.addWriteFile(
             "tinyobj_loader_c_wrapper.c",
             "#define TINYOBJ_LOADER_C_IMPLEMENTATION\n#include <tinyobj_loader_c.h>",

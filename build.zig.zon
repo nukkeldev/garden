@@ -18,10 +18,6 @@
             .url = "git+https://github.com/castholm/SDL#3ed62e53aecd9ffb28e44b9d35b7c09a8739e823",
             .hash = "sdl-0.2.4+3.2.16-7uIn9DPhfgH29yAIJqHLc69hNb4IW0q-AngtKCFoT92b",
         },
-        .entt = .{
-            .url = "git+https://github.com/prime31/zig-ecs#fdad10c3274582842ed4c06b580a414c4c826f4c",
-            .hash = "entt-1.0.0-qJPtbESoAgAGf--3nrQclyKL7WHK8JxZTGs8u2YNdOHm",
-        },
         .obj = .{
             .url = "git+https://github.com/chip2n/zig-obj.git#4ad4f6463b553395a1cd5388846d8623f350bf8b",
             .hash = "obj-3.0.0-v8OfipDLAAAfZnwVIVO_8cb6ZWpkxWK6-HTkkF-k6WuO",
@@ -30,9 +26,13 @@
             .url = "git+https://github.com/zig-gamedev/ztracy#be3d003f29d59d72e68e493ab531374ab474a795",
             .hash = "ztracy-0.14.0-dev-zHJSq1oQFwCAq2LhbqsBUmZAipMzsD8UfKL5Etc_OJMb",
         },
-        .tinyobjloader = .{
+        .tinyobjloader_c = .{
             .url = "git+https://github.com/syoyo/tinyobjloader-c.git#0f8ea84a0da616790b476912e1ccc641f36b463e",
             .hash = "N-V-__8AAKWmBQDq9z-2g3I1U-0lcQNLp3GjkIX3CScXeOiN",
+        },
+        .zigimg = .{
+            .url = "git+https://github.com/zigimg/zigimg#31bd433201d12d6aa700074d751a7db4555cdb0d",
+            .hash = "zigimg-0.1.0-8_eo2qClEgC8dTSiSO6vqGe7mdtIkobGi-Uc4d0Eo7_2",
         },
     },
     .paths = .{

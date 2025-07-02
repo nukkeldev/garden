@@ -19,6 +19,7 @@ pub const ShaderLayout = struct {
 
     num_storage_buffers: usize = 0,
     num_uniform_buffers: usize = 0,
+    num_samplers: usize = 0,
 
     const Self = @This();
 
@@ -129,8 +130,12 @@ pub const ShaderLayout = struct {
 
         for (reflection.parameters) |param| {
             switch (param.type.kind) {
-                .resource => self.num_storage_buffers += 1,
+                .resource => switch (param.type.baseShape.?) {
+                    .structuredBuffer => self.num_storage_buffers += 1,
+                    .texture2D => self.num_samplers += 1,
+                },
                 .constantBuffer => self.num_uniform_buffers += 1,
+                .samplerState => self.num_samplers += 1,
             }
         }
 
@@ -146,6 +151,8 @@ pub const ShaderLayout = struct {
             .stage = self.stage,
             .num_uniform_buffers = @intCast(self.num_uniform_buffers),
             .num_storage_buffers = @intCast(self.num_storage_buffers),
+            .num_samplers = @intCast(self.num_samplers),
+            .num_storage_textures = 0, // TODO
         });
         if (shader == null) SDL.err("SDL_CreateGPUShader", "", .{});
 
@@ -254,7 +261,7 @@ pub const RawReflection = struct {
         baseShape: ?TypeResourceBaseShape = null,
         resultType: ?*ElementType = null,
 
-        pub const TypeKind = enum { constantBuffer, resource };
+        pub const TypeKind = enum { constantBuffer, resource, samplerState };
         pub const ElementType = struct {
             kind: ElementTypeKind,
             name: ?[]const u8 = null,
@@ -291,6 +298,7 @@ pub const RawReflection = struct {
         };
         pub const TypeResourceBaseShape = enum {
             structuredBuffer,
+            texture2D,
         };
     };
 
