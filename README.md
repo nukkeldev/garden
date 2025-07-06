@@ -26,5 +26,6 @@ A performance-focused multi-media engine.
     - [x] Color
     - [x] Highlight/Exponent
   - [ ] Everything else
-- [ ] Textures
+- [x] Textures
+  - [ ] Some textures are appearing on the back of meshes when they are shown on both sides in blender.
 - [ ] Skybox
