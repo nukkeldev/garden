@@ -3,16 +3,15 @@ const std = @import("std");
 const log = std.log.scoped(.@"gpu.compile");
 const oom = @import("../log.zig").oom;
 
-const EMBEDDED_VERTEX_SHADER = @embedFile("../assets/shaders/compiled/vertex.spv");
-const EMBEDDED_VERTEX_SHADER_LAYOUT = @embedFile("../assets/shaders/compiled/vertex.layout");
-const EMBEDDED_FRAGMENT_SHADER = @embedFile("../assets/shaders/compiled/fragment.spv");
-const EMBEDDED_FRAGMENT_SHADER_LAYOUT = @embedFile("../assets/shaders/compiled/fragment.layout");
+const EMBEDDED_SHADER = @embedFile("../assets/shaders/compiled/phong.spv");
+const EMBEDDED_SHADER_LAYOUT = @embedFile("../assets/shaders/compiled/phong.slang.layout");
 
 pub const CompiledShader = struct {
     allocator: ?std.mem.Allocator,
 
     spv: []const u8,
     layout: []const u8,
+    entry_point_name: []const u8,
 
     const Stage = enum {
         Vertex,
@@ -21,24 +20,15 @@ pub const CompiledShader = struct {
 
     /// Compile a `.slang` shader for the `stage` and output the resultant file contents.
     pub fn compileBlocking(allocator: std.mem.Allocator, path: []const u8, stage: Stage, embedded: bool, return_contents: bool) !?@This() {
-        // Convert stage enum into file extension and entrypoint.
-        const ext = switch (stage) {
-            .Vertex => "vertex",
-            .Fragment => "fragment",
-        };
-
-        if (embedded) {
-            log.debug("Using pre-compiled {s} shader.", .{ext});
-            return switch (stage) {
-                .Vertex => .{ .allocator = null, .spv = EMBEDDED_VERTEX_SHADER, .layout = EMBEDDED_VERTEX_SHADER_LAYOUT },
-                .Fragment => .{ .allocator = null, .spv = EMBEDDED_FRAGMENT_SHADER, .layout = EMBEDDED_FRAGMENT_SHADER_LAYOUT },
-            };
-        }
-
-        const entry = switch (stage) {
+        const entry_point_name = switch (stage) {
             .Vertex => "vertexMain",
             .Fragment => "fragmentMain",
         };
+
+        if (embedded) {
+            log.debug("Using pre-compiled {s} shader.", .{path});
+            return .{ .allocator = null, .spv = EMBEDDED_SHADER, .layout = EMBEDDED_SHADER_LAYOUT, .entry_point_name = entry_point_name };
+        }
 
         // Resolve to an absolute path.
         const abs = try std.fs.cwd().realpathAlloc(allocator, path);
@@ -49,10 +39,10 @@ pub const CompiledShader = struct {
         const basename = std.fs.path.basename(abs);
         const filename = basename[0 .. std.mem.lastIndexOfScalar(u8, basename, '.') orelse basename.len];
 
-        log.debug("Compiling {s} shader: {s}/{s}.slang...", .{ ext, dirname, filename });
+        log.debug("Compiling '{s}': {s}/{s}...", .{ path, dirname, basename });
 
         const spv_path = std.fmt.allocPrint(allocator, "{s}/compiled/{s}.spv", .{ dirname, filename }) catch oom();
-        const layout_path = std.fmt.allocPrint(allocator, "{s}/compiled/{s}.layout", .{ dirname, filename }) catch oom();
+        const layout_path = std.fmt.allocPrint(allocator, "{s}/compiled/{s}.layout", .{ dirname, basename }) catch oom();
         defer allocator.free(spv_path);
         defer allocator.free(layout_path);
 
@@ -69,8 +59,6 @@ pub const CompiledShader = struct {
                 spv_path,
                 "-reflection-json",
                 layout_path,
-                "-entry",
-                entry,
                 "-target",
                 "spirv",
                 "-profile",
@@ -87,16 +75,21 @@ pub const CompiledShader = struct {
 
         // Read the output files.
         const spv = std.fs.cwd().readFileAlloc(allocator, spv_path, std.math.maxInt(usize)) catch {
-            log.err("Failed to read vertex shader!", .{});
+            log.err("Failed to read shader!", .{});
             return null;
         };
 
         const layout = std.fs.cwd().readFileAlloc(allocator, layout_path, std.math.maxInt(usize)) catch {
-            log.err("Failed to read vertex shader layout!", .{});
+            log.err("Failed to read shader layout!", .{});
             return null;
         };
 
-        return .{ .allocator = allocator, .spv = spv, .layout = layout };
+        return .{
+            .allocator = allocator,
+            .spv = spv,
+            .layout = layout,
+            .entry_point_name = entry_point_name,
+        };
     }
 
     pub fn deinit(self: @This()) void {

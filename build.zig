@@ -123,43 +123,20 @@ fn buildShaders(b: *std.Build) !*std.Build.Step {
     const mkdir = b.addSystemCommand(&.{ "mkdir", "-p" });
     mkdir.addDirectoryArg(b.path("src/assets/shaders/compiled"));
 
-    const vert = b.addSystemCommand(&.{
+    const phong = b.addSystemCommand(&.{
         "slangc",
-        "src/assets/shaders/vertex.slang",
-        "-entry",
-        "vertexMain",
-        "-stage",
-        "vertex",
+        "src/assets/shaders/phong.slang",
         "-profile",
         "spirv_1_3",
         "-o",
-        "src/assets/shaders/compiled/vertex.spv",
+        "src/assets/shaders/compiled/phong.spv",
         "-fvk-use-entrypoint-name",
         "-reflection-json",
-        "src/assets/shaders/compiled/vertex.layout",
+        "src/assets/shaders/compiled/phong.slang.layout",
         "-matrix-layout-row-major",
     });
-    vert.step.dependOn(&mkdir.step);
-    step.dependOn(&vert.step);
-
-    const frag = b.addSystemCommand(&.{
-        "slangc",
-        "src/assets/shaders/fragment.slang",
-        "-entry",
-        "fragmentMain",
-        "-stage",
-        "fragment",
-        "-profile",
-        "spirv_1_3",
-        "-o",
-        "src/assets/shaders/compiled/fragment.spv",
-        "-fvk-use-entrypoint-name",
-        "-reflection-json",
-        "src/assets/shaders/compiled/fragment.layout",
-        "-matrix-layout-row-major",
-    });
-    frag.step.dependOn(&mkdir.step);
-    step.dependOn(&frag.step);
+    phong.step.dependOn(&mkdir.step);
+    step.dependOn(&phong.step);
 
     return step;
 }

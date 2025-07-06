@@ -11,7 +11,6 @@ const cstr = ffi.CStr;
 
 // TODO: FIXED_BUFFER_ALLOCATOR FOR COMPTIME JSON PARSING
 
-/// This is not a full representation of the file, just the properties we need.
 pub const ShaderLayout = struct {
     entry_point_name: []const u8,
     stage: c.SDL_GPUShaderStage,
@@ -23,19 +22,28 @@ pub const ShaderLayout = struct {
 
     const Self = @This();
 
-    pub fn parseLeaky(arena_allocator: std.mem.Allocator, json: []const u8) !Self {
+    pub fn parseLeaky(arena_allocator: std.mem.Allocator, json: []const u8, entry_point_name: []const u8) !Self {
         // Parse the reflection json file.
         const reflection = try std.json.parseFromSliceLeaky(RawReflection, arena_allocator, json, .{});
 
         var self = Self{
-            .entry_point_name = undefined,
+            .entry_point_name = entry_point_name,
             .stage = undefined,
         };
 
-        outer: { // Entry point parsing
-            const entry_point = reflection.entryPoints[0];
+        var entry_point = reflection.entryPoints[0];
+        for (reflection.entryPoints) |ep| {
+            if (std.mem.eql(u8, ep.name, entry_point_name)) {
+                entry_point = ep;
+                break;
+            }
+        } else {
+            log.err("Cannot find entrypoint '{s}' out of:", .{entry_point_name});
+            for (reflection.entryPoints) |ep| log.debug("- '{s}'", .{ep.name});
+            return error.UnknownEntryPoint;
+        }
 
-            self.entry_point_name = entry_point.name;
+        outer: { // Entry point parsing
             self.stage = switch (entry_point.stage) {
                 .vertex => c.SDL_GPU_SHADERSTAGE_VERTEX,
                 .fragment => c.SDL_GPU_SHADERSTAGE_FRAGMENT,
@@ -129,6 +137,11 @@ pub const ShaderLayout = struct {
         }
 
         for (reflection.parameters) |param| {
+            switch (entry_point.stage) {
+                .vertex => if (param.binding.space.? > 1) continue,
+                .fragment => if (param.binding.space.? < 2) continue,
+            }
+
             switch (param.type.kind) {
                 .resource => switch (param.type.baseShape.?) {
                     .structuredBuffer => self.num_storage_buffers += 1,
@@ -212,11 +225,15 @@ test "shader layout creation" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    const vertexLayoutSource = @embedFile("../assets/shaders/compiled/vertex.layout");
-    const fragmentLayoutSource = @embedFile("../assets/shaders/compiled/fragment.layout");
+    const layout_json = try std.fs.cwd().readFileAlloc(
+        std.testing.allocator,
+        "src/assets/shaders/compiled/phong.slang.layout",
+        std.math.maxInt(usize),
+    );
+    defer std.testing.allocator.free(layout_json);
 
-    _ = try ShaderLayout.parseLeaky(arena.allocator(), vertexLayoutSource);
-    _ = try ShaderLayout.parseLeaky(arena.allocator(), fragmentLayoutSource);
+    _ = try ShaderLayout.parseLeaky(arena.allocator(), layout_json, "vertexMain");
+    _ = try ShaderLayout.parseLeaky(arena.allocator(), layout_json, "fragmentMain");
 }
 
 /// NOTE: This is not a complete definition of the result of Slang's reflection json,

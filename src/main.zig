@@ -378,68 +378,23 @@ fn loadPipeline(recompile: bool) !void {
 
     if (pipeline != null) c.SDL_ReleaseGPUGraphicsPipeline(device.handle, pipeline);
 
-    var compiled_vertex_shader: gpu.compile.CompiledShader = undefined;
-    var compiled_fragment_shader: gpu.compile.CompiledShader = undefined;
+    const compiled_vertex_shader = (try gpu.compile.CompiledShader.compileBlocking(
+        allocator,
+        "src/assets/shaders/vertex.slang",
+        .Vertex,
+        pipeline == null,
+        true,
+    )).?;
+    const compiled_fragment_shader = (try gpu.compile.CompiledShader.compileBlocking(
+        allocator,
+        "src/assets/shaders/fragment.slang",
+        .Fragment,
+        pipeline == null,
+        true,
+    )).?;
 
-    if (recompile) {
-        compiled_vertex_shader = (try gpu.compile.CompiledShader.compileBlocking(
-            allocator,
-            "src/assets/shaders/vertex.slang",
-            .Vertex,
-            pipeline == null,
-            true,
-        )).?;
-        compiled_fragment_shader = (try gpu.compile.CompiledShader.compileBlocking(
-            allocator,
-            "src/assets/shaders/fragment.slang",
-            .Fragment,
-            pipeline == null,
-            true,
-        )).?;
-    } else {
-        compiled_vertex_shader = .{
-            .allocator = allocator,
-            .spv = std.fs.cwd().readFileAlloc(
-                allocator,
-                "src/assets/shaders/compiled/vertex.spv",
-                std.math.maxInt(usize),
-            ) catch {
-                log_gdn.err("Failed to read vertex shader!", .{});
-                return;
-            },
-            .layout = std.fs.cwd().readFileAlloc(
-                allocator,
-                "src/assets/shaders/compiled/vertex.layout",
-                std.math.maxInt(usize),
-            ) catch {
-                log_gdn.err("Failed to read vertex shader layout!", .{});
-                return;
-            },
-        };
-
-        compiled_fragment_shader = .{
-            .allocator = allocator,
-            .spv = std.fs.cwd().readFileAlloc(
-                allocator,
-                "src/assets/shaders/compiled/fragment.spv",
-                std.math.maxInt(usize),
-            ) catch {
-                log_gdn.err("Failed to read fragment shader!", .{});
-                return;
-            },
-            .layout = std.fs.cwd().readFileAlloc(
-                allocator,
-                "src/assets/shaders/compiled/fragment.layout",
-                std.math.maxInt(usize),
-            ) catch {
-                log_gdn.err("Failed to read fragment shader layout!", .{});
-                return;
-            },
-        };
-    }
-
-    const vertex_layout = try gpu.slang.ShaderLayout.parseLeaky(allocator, compiled_vertex_shader.layout);
-    const fragment_layout = try gpu.slang.ShaderLayout.parseLeaky(allocator, compiled_fragment_shader.layout);
+    const vertex_layout = try gpu.slang.ShaderLayout.parseLeaky(allocator, compiled_vertex_shader.layout, "vertexMain");
+    const fragment_layout = try gpu.slang.ShaderLayout.parseLeaky(allocator, compiled_fragment_shader.layout, "fragmentMain");
 
     pipeline = gpu.slang.ShaderLayout.createPipelineLeaky(
         allocator,
