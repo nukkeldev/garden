@@ -160,16 +160,16 @@ fn init() !void {
 
     // Create the initial models.
     fz.replace(@src(), "load models");
-    car = try Model.initFromEmbeddedObj(
+    car = try Model.initFromObjFile(
         allocator,
         &device,
         "Car",
         .{},
-        @embedFile("assets/models/2021-Lamborghini-Countac [Lexyc16]/Countac.obj"),
-        @embedFile("assets/models/2021-Lamborghini-Countac [Lexyc16]/Countac.mtl"),
+        "src/assets/models/2021-Lamborghini-Countac [Lexyc16]/Countac.obj",
+        "src/assets/models/2021-Lamborghini-Countac [Lexyc16]/Countac.mtl",
         try object.embedTextureMap(
             allocator,
-            "assets/models/2021-Lamborghini-Countac [Lexyc16]/textures",
+            "src/assets/models/2021-Lamborghini-Countac [Lexyc16]/textures",
             &.{
                 "Lamborghini-text-logo-1440x900_baseColor.png",
                 "Material.001_baseColor.png",

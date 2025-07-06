@@ -54,13 +54,13 @@ pub const Model = struct {
     // -- Initialization -- //
 
     /// Initializes a `Model` from an embedded `.obj` model and `.mtl` material library.
-    pub fn initFromEmbeddedObj(
+    pub fn initFromObjFile(
         allocator: std.mem.Allocator,
         device: *const SDL.GPUDevice,
         name: []const u8,
         transform: DynamicTransform,
-        model_data: []const u8,
-        material_lib_data: []const u8,
+        model_path: []const u8,
+        material_lib_path: []const u8,
         textures: std.StringHashMap(Image),
     ) !Model {
         var fz = FZ.init(@src(), "initFromEmbeddedObj");
@@ -69,9 +69,16 @@ pub const Model = struct {
         log.debug("Loading model '{s}'...", .{name});
 
         // Parse the OBJ model and material data.
-        fz.push(@src(), "parse model");
+        fz.push(@src(), "read model");
+        const model_data = try std.fs.cwd().readFileAlloc(allocator, model_path, std.math.maxInt(usize));
+        const material_lib_data = try std.fs.cwd().readFileAlloc(allocator, material_lib_path, std.math.maxInt(usize));
+
+        fz.replace(@src(), "parse model");
         const model = try TinjObjLoader.loadFromBytes(allocator, name, model_data, material_lib_data);
         defer model.deinit(allocator);
+
+        allocator.free(model_data);
+        allocator.free(material_lib_data);
 
         log.debug("Loaded model '{s}' with {} vertices, {} normals, and {} texcoords.", .{
             name,
@@ -391,7 +398,10 @@ const OBJModel = struct {
 pub fn embedTextureMap(allocator: std.mem.Allocator, comptime root: []const u8, comptime files: []const []const u8) !std.StringHashMap(Image) {
     var map = std.StringHashMap(Image).init(allocator);
     inline for (files) |file| {
-        var image = try Image.fromMemory(allocator, @embedFile(root ++ std.fs.path.sep_str ++ file));
+        const contents = try std.fs.cwd().readFileAlloc(allocator, root ++ std.fs.path.sep_str ++ file, std.math.maxInt(usize));
+        defer allocator.free(contents);
+
+        var image = try Image.fromMemory(allocator, contents);
         try image.convert(.rgba32);
         try map.put(file, image);
     }
