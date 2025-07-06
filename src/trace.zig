@@ -17,6 +17,7 @@ pub const FnZone = struct {
 
     next_zone_index: usize = 0,
     zones: [MAX_ZONES]ztracy.ZoneCtx = undefined,
+    zone_names: [MAX_ZONES][*:0]const u8 = undefined,
 
     /// Initializes a `FnZone`; pushing an initial zone.
     pub fn init(comptime src: std.builtin.SourceLocation, name: [*:0]const u8) FnZone {
@@ -29,7 +30,10 @@ pub const FnZone = struct {
     pub fn push(self: *FnZone, comptime src: std.builtin.SourceLocation, name: [*:0]const u8) void {
         if (DEBUG and self.next_zone_index == MAX_ZONES) @panic("Too many nested zones!");
 
+        // std.debug.print("pushing: {s}\n", .{name});
+
         self.zones[self.next_zone_index] = ztracy.ZoneN(src, name);
+        self.zone_names[self.next_zone_index] = name;
         self.next_zone_index += 1;
     }
 
@@ -42,6 +46,8 @@ pub const FnZone = struct {
     /// Pop the last-pushed zone.
     pub fn pop(self: *FnZone) void {
         if (self.next_zone_index == 0) return;
+
+        // std.debug.print("popping: {s}\n", .{self.zone_names[self.next_zone_index - 1]});
 
         self.next_zone_index -= 1;
         self.zones[self.next_zone_index].End();

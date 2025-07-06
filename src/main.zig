@@ -23,8 +23,11 @@ pub const std_options: std.Options = .{ .log_level = .debug };
 const INITIAL_WINDOW_SIZE = .{ .width = 1024, .height = 1024 };
 const WINDOW_FLAGS = c.SDL_WINDOW_HIDDEN | c.SDL_WINDOW_HIGH_PIXEL_DENSITY | c.SDL_WINDOW_VULKAN;
 
-const TARGET_FRAMERATE: f32 = 60.0;
-const TARGET_FRAMETIME_NS: u64 = @intFromFloat(1e9 / 60.0);
+const TARGET_FRAMERATE: f32 = 60.0; // FPS
+const TARGET_FRAMETIME_NS: u64 = @intFromFloat(1e9 / TARGET_FRAMERATE);
+
+const TARGET_UPDATE_RATE: f32 = 1_000.0; // UPS
+const TARGET_UPDATE_TIME_NS: u64 = @intFromFloat(1e9 / TARGET_UPDATE_RATE);
 
 const FRAMES_IN_FLIGHT = 3;
 
@@ -64,6 +67,9 @@ var fov: f32 = INITIAL_FOV;
 var proj_matrix: zm.Mat4f = zm.Mat4f.perspective(std.math.degreesToRadians(INITIAL_FOV), 1.0, 0.05, 100.0);
 
 var last_update_ns: u64 = 0;
+var last_render_ns: u64 = 0;
+var next_render_ns: u64 = 0;
+var next_update_ns: u64 = 0;
 var should_exit = false;
 
 var debug = true;
@@ -144,6 +150,9 @@ fn init() !void {
 
     // Set the start time.
     last_update_ns = c.SDL_GetTicksNS();
+    last_render_ns = c.SDL_GetTicksNS();
+    next_update_ns = c.SDL_GetTicksNS();
+    next_render_ns = c.SDL_GetTicksNS();
 
     // Get a pointer to the keyboard state.
     keyboard_state = c.SDL_GetKeyboardState(null);
@@ -163,22 +172,19 @@ fn init() !void {
 }
 
 fn update() !void {
-    var fz = FZ.init(@src(), "update");
-    defer fz.end();
-
     const ticks_ns: u64 = @intCast(c.SDL_GetTicksNS());
-    const dt = ticks_ns - last_update_ns;
 
-    // TODO: Get rid of conditional.
-    // if (dt < TARGET_FRAMETIME_NS) {
-    //     c.SDL_DelayNS(@intCast(TARGET_FRAMETIME_NS - (ticks_ns - last_update_ns)));
-    // }
-
-    try pollEvents();
-    try updateSystems(ticks_ns, dt);
-    try render(ticks_ns, dt);
-
-    last_update_ns = ticks_ns;
+    if (ticks_ns >= next_update_ns) {
+        try pollEvents();
+        try updateSystems(ticks_ns, ticks_ns - last_update_ns);
+        last_update_ns = ticks_ns;
+        next_update_ns = ticks_ns + TARGET_UPDATE_TIME_NS;
+    }
+    if (ticks_ns >= next_render_ns) {
+        try render(ticks_ns);
+        last_render_ns = ticks_ns;
+        next_render_ns = ticks_ns + TARGET_FRAMETIME_NS;
+    }
 }
 
 fn pollEvents() !void {
@@ -270,13 +276,10 @@ fn updateSystems(ticks: u64, dt: u64) !void {
     )) SDL.err("SetWindowRelativeMouseMode", "", .{});
 }
 
-fn render(ticks: u64, dt: u64) !void {
+fn render(ticks_ns: u64) !void {
     trace.ztracy.FrameMark();
     var fz = FZ.init(@src(), "render");
     defer fz.end();
-
-    _ = ticks;
-    const frame_time_ms = @as(f32, @floatFromInt(dt)) / 1e6;
 
     fz.push(@src(), "acquire");
     const cmd = try SDL.GPUCommandBuffer.acquire(&device);
@@ -323,7 +326,7 @@ fn render(ticks: u64, dt: u64) !void {
     for (models) |model| try model.draw(&cmd, &rpass);
 
     // ImGui Rendering
-    if (debug) renderDebug(&cmd, &rpass, frame_time_ms);
+    if (debug) renderDebug(&cmd, &rpass, ticks_ns);
 
     // Submit the render pass.
     fz.replace(@src(), "submit");
@@ -435,7 +438,7 @@ fn loadPipeline(recompile: bool) !void {
     if (recompile) log_gdn.info("Compiled and reloaded shaders!", .{});
 }
 
-fn renderDebug(cmd: *const SDL.GPUCommandBuffer, rpass: *const SDL.GPURenderPass, frame_time_ms: f32) void {
+fn renderDebug(cmd: *const SDL.GPUCommandBuffer, rpass: *const SDL.GPURenderPass, ticks_ns: u64) void {
     // Begin a new ImGui frame.
     c.cImGui_ImplSDLGPU3_NewFrame();
     c.cImGui_ImplSDL3_NewFrame();
@@ -455,8 +458,14 @@ fn renderDebug(cmd: *const SDL.GPUCommandBuffer, rpass: *const SDL.GPURenderPass
     );
     c.ImGui_SetWindowPos(.{ .x = 5.0, .y = 5.0 }, c.ImGuiCond_None);
     c.ImGui_SeparatorText("Performance");
+
+    const frame_time_ms = @as(f32, @floatFromInt(ticks_ns - last_render_ns)) / 1e6;
+    const update_time_ms = @as(f32, @floatFromInt(ticks_ns - last_update_ns)) / 1e6;
+
     c.ImGui_Text("FPS: %-6.2f", 1e3 / frame_time_ms);
     c.ImGui_Text("Frame Time (ms): %-6.3f", frame_time_ms);
+    c.ImGui_Text("UPS: %-6.2f", 1e3 / update_time_ms);
+    c.ImGui_Text("Update Time (ms): %-6.3f", update_time_ms);
     c.ImGui_SeparatorText("Camera");
     c.ImGui_Text("Position: (%.2f, %.2f, %.2f)", camera.translation[0], camera.translation[1], camera.translation[2]);
     c.ImGui_Text(
