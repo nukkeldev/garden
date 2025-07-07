@@ -1,8 +1,10 @@
 const std = @import("std");
 
-const FZ = @import("trace.zig").FnZone;
+const FZ = @import("perf/tracy.zig").FnZone;
 
 // C export
+
+const build_opts = @import("build-opts");
 
 pub const c = @cImport({
     // SDL3
@@ -19,6 +21,14 @@ pub const c = @cImport({
 
     // tinyobj_loader_c
     @cInclude("tinyobj_loader_c.h");
+
+    // Tracy
+    if (build_opts.enable_tracy) {
+        @cDefine("TRACY_ENABLE", {});
+        if (build_opts.enable_tracy_callstack) @cDefine("TRACY_CALLSTACK", {});
+
+        @cInclude("tracy/TracyC.h");
+    }
 });
 
 // C-Interop

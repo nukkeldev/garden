@@ -4,13 +4,13 @@ const zm = @import("zm");
 const img = @import("img");
 
 const gpu = @import("gpu.zig");
-const trace = @import("trace.zig");
+const tracy = @import("perf/tracy.zig");
 const c = @import("ffi.zig").c;
 
 const SDL = @import("ffi.zig").SDL;
 const DynamicTransform = @import("transform.zig").DynamicTransform;
 
-const FZ = trace.FnZone;
+const FZ = tracy.FnZone;
 const Image = img.Image;
 
 const MAX_U32 = std.math.maxInt(u32);

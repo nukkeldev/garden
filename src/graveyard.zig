@@ -1,7 +1,6 @@
 //! This file records cool but now unused functions from this codebase.
 
 const std = @import("std");
-const trace = @import("trace.zig");
 
 pub fn filterFlattenedData(
     comptime Data: type,
@@ -14,7 +13,7 @@ pub fn filterFlattenedData(
     out_invalid_elems: ?*[]usize,
 ) !struct { usize, []Data } {
     // Assert the size of the raw data to match that of the element lengths given.
-    if (trace.DEBUG) {
+    if (@import("root").DEBUG) {
         var len: usize = 0;
         for (raw_data_elem_lens) |n| len += @intCast(n);
         try std.testing.expectEqual(len, raw_data.len);

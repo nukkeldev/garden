@@ -2,7 +2,7 @@ const std = @import("std");
 
 const zm = @import("zm");
 
-const trace = @import("trace.zig");
+const tracy = @import("perf/tracy.zig");
 const gpu = @import("gpu.zig");
 const ffi = @import("ffi.zig");
 const log = @import("log.zig");
@@ -11,13 +11,18 @@ const c = ffi.c;
 
 const DynamicTransfrom = @import("transform.zig").DynamicTransform;
 const Model = object.Model;
-const FZ = trace.FnZone;
+const FZ = tracy.FnZone;
 const SDL = ffi.SDL;
 
 const log_gdn = std.log.scoped(.garden);
 const log_imgui = std.log.scoped(.imgui);
 
 pub const std_options: std.Options = .{ .log_level = .debug };
+
+pub const DEBUG = switch (@import("builtin").mode) {
+    .Debug, .ReleaseSafe => true,
+    .ReleaseFast, .ReleaseSmall => false,
+};
 
 // Configuration
 
@@ -43,9 +48,10 @@ const PAN_SPEED: f32 = 2;
 
 // State
 
-var debug_allocator = std.heap.DebugAllocator(.{}).init;
-var arena: trace.TracingArenaAllocator = .init(debug_allocator.allocator());
-var allocator = arena.allocator();
+var gpa: std.mem.Allocator = undefined;
+
+var arena: std.heap.ArenaAllocator = undefined;
+var allocator: std.mem.Allocator = undefined;
 
 var window: SDL.Window = undefined;
 var device: SDL.GPUDevice = undefined;
@@ -314,7 +320,7 @@ fn updateSystems(ticks: u64, dt: u64) !void {
 }
 
 fn render(ticks_ns: u64) !void {
-    trace.ztracy.FrameMark();
+    tracy.frameMark();
     var fz = FZ.init(@src(), "render");
     defer fz.end();
 
@@ -400,8 +406,6 @@ fn exit() !void {
 
     for (models) |model| model.deinit(&device);
     try window.destroy();
-
-    arena.deinit();
 
     c.SDL_Quit();
 }
@@ -505,9 +509,27 @@ fn renderDebug(cmd: *const SDL.GPUCommandBuffer, rpass: *const SDL.GPURenderPass
 var err: ?anyerror = null;
 
 pub fn main() !void {
+    // Initialize the best allocator depending on the mode.
+    var debug_allocator = std.heap.DebugAllocator(.{}).init;
+
+    gpa = if (DEBUG) debug_allocator.allocator() else std.heap.smp_allocator;
+    if (tracy.enable) {
+        var ta = tracy.tracyAllocator(gpa);
+        gpa = ta.allocator();
+    }
+    arena = .init(gpa);
+    allocator = arena.allocator();
+
+    // Run the main loop.
     try init();
     while (!should_exit) try update();
     try exit();
+
+    // Handle exit logic.
+    arena.deinit();
+    if (DEBUG) {
+        _ = debug_allocator.deinit();
+    }
 }
 
 // Helpers
