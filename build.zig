@@ -113,6 +113,11 @@ pub fn createExecutable(
         mod.linkLibrary(lib);
     }
 
+    // TODO: Option this in the future, when reimplementing offline shader compilation.
+    mod.addImport("slang", b.dependency("slang", .{
+        .optimize = .ReleaseFast,
+    }).module("slang"));
+
     // Add zig dependencies.
     mod.addImport("zm", b.dependency("zm", .{}).module("zm"));
     mod.addImport("img", b.dependency("zigimg", .{}).module("zigimg"));
@@ -154,10 +159,10 @@ pub fn build(b: *std.Build) !void {
 
     // Commands
 
-    const build_shaders_step = createBuildShadersStep(b, &.{
-        "phong",
-    });
-    exe.step.dependOn(build_shaders_step);
+    // const build_shaders_step = createBuildShadersStep(b, &.{
+    //     "phong",
+    // });
+    // exe.step.dependOn(build_shaders_step);
 
     // --
 
@@ -191,37 +196,38 @@ pub fn build(b: *std.Build) !void {
     clean_step.dependOn(&b.addRemoveDirTree(b.path("zig-out")).step);
 }
 
-/// Creates a step that invokes `slangc` for all supplied shader paths that are
-/// relative to `src/assets/shaders` WITHOUT their `.slang` file extension.
-fn createBuildShadersStep(b: *std.Build, rel_slang_paths: []const []const u8) *std.Build.Step {
-    const step = b.step("build-shaders", "Builds the pre-defined shaders");
-    step.* = .init(.{
-        .id = .custom,
-        .name = "build-shaders",
-        .owner = b,
-    });
+// TODO: Deprecated Offline Shader Compilation
+// /// Creates a step that invokes `slangc` for all supplied shader paths that are
+// /// relative to `src/assets/shaders` WITHOUT their `.slang` file extension.
+// fn createBuildShadersStep(b: *std.Build, rel_slang_paths: []const []const u8) *std.Build.Step {
+//     const step = b.step("build-shaders", "Builds the pre-defined shaders");
+//     step.* = .init(.{
+//         .id = .custom,
+//         .name = "build-shaders",
+//         .owner = b,
+//     });
 
-    // Make sure the directory exists.
-    // TODO: Replace this with something not system-specific.
-    const mkdir = b.addSystemCommand(&.{ "mkdir", "-p" });
-    mkdir.addDirectoryArg(b.path(SLANG_SHADER_DIR ++ "/compiled"));
+//     // Make sure the directory exists.
+//     // TODO: Replace this with something not system-specific.
+//     const mkdir = b.addSystemCommand(&.{ "mkdir", "-p" });
+//     mkdir.addDirectoryArg(b.path(SLANG_SHADER_DIR ++ "/compiled"));
 
-    for (rel_slang_paths) |path| {
-        const compile = b.addSystemCommand(&.{
-            "slangc",
-            b.fmt(SLANG_SHADER_DIR ++ "/{s}.slang", .{path}),
-            "-profile",
-            SLANG_SPIRV_PROFILE,
-            "-o",
-            SLANG_SHADER_DIR ++ "/compiled/phong.spv",
-            "-reflection-json",
-            SLANG_SHADER_DIR ++ "/compiled/phong.slang.layout",
-            "-fvk-use-entrypoint-name", // Allows for multiple entrypoints in a single file.
-            "-matrix-layout-row-major", // `slangc` legacy default, changed with online API iirc.
-        });
-        compile.step.dependOn(&mkdir.step);
-        step.dependOn(&compile.step);
-    }
+//     for (rel_slang_paths) |path| {
+//         const compile = b.addSystemCommand(&.{
+//             "slangc",
+//             b.fmt(SLANG_SHADER_DIR ++ "/{s}.slang", .{path}),
+//             "-profile",
+//             SLANG_SPIRV_PROFILE,
+//             "-o",
+//             SLANG_SHADER_DIR ++ "/compiled/phong.spv",
+//             "-reflection-json",
+//             SLANG_SHADER_DIR ++ "/compiled/phong.slang.layout",
+//             "-fvk-use-entrypoint-name", // Allows for multiple entrypoints in a single file.
+//             "-matrix-layout-row-major", // `slangc` legacy default, changed with online API iirc.
+//         });
+//         compile.step.dependOn(&mkdir.step);
+//         step.dependOn(&compile.step);
+//     }
 
-    return step;
-}
+//     return step;
+// }

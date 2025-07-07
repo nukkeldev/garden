@@ -11,6 +11,17 @@ const cstr = ffi.CStr;
 
 // TODO: FIXED_BUFFER_ALLOCATOR FOR COMPTIME JSON PARSING
 
+test "online compilation" {
+    const start = std.time.milliTimestamp();
+    const shader = try @import("slang").compileShader(std.testing.allocator, "phong", @embedFile("../assets/shaders/phong.slang"));
+    std.debug.print("[{}ms] spirv: {}, json: {}", .{ std.time.milliTimestamp() - start, shader.spirv.len, shader.refl.len });
+
+    // const file = try std.fs.cwd().createFile("test.json", .{});
+    // defer file.close();
+
+    // _ = try file.write(shader.refl);
+}
+
 pub const ShaderLayout = struct {
     entry_point_name: []const u8,
     stage: c.SDL_GPUShaderStage,
@@ -324,7 +335,7 @@ pub const RawReflection = struct {
         stage: EntryPointStage,
         parameters: []EntryPointParamater,
         result: EntryPointResult,
-        bindings: []EntryPointBinding,
+        bindings: ?[]EntryPointBinding = null,
 
         pub const EntryPointStage = enum {
             vertex,

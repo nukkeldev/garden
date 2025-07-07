@@ -1,0 +1,16 @@
+.{
+    .name = .slang_c,
+    .version = "0.0.0",
+
+    .fingerprint = 0xe471a8f837452de4, // Changing this has security and trust implications.
+
+    .minimum_zig_version = "0.14.1",
+
+    .dependencies = .{},
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

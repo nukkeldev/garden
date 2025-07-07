@@ -36,6 +36,10 @@
             .url = "git+https://github.com/wolfpld/tracy.git#abbc35793e245510a9b33288cfdc2d68a894c535",
             .hash = "N-V-__8AAJNvPwGqa0WLAedW1M6YWG6xwzU5HD-UhrQ1Z7Eh",
         },
+        // Shader Compilation
+        .slang = .{
+            .path = "tools/shader-compiler",
+        },
     },
     .paths = .{
         "build.zig",

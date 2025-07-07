@@ -88,6 +88,8 @@ var mouse_delta_x: f32 = 0;
 var mouse_delta_y: f32 = 0;
 var keyboard_state: [*c]const bool = undefined;
 
+var last_shader_hash: usize = 0;
+
 // Functions
 
 fn init() !void {
@@ -419,32 +421,41 @@ fn loadPipeline(recompile: bool) !void {
         c.SDL_ReleaseGPUGraphicsPipeline(device.handle, pipeline);
     }
 
-    const compiled_vertex_shader = (try gpu.compile.CompiledShader.compileBlocking(
-        allocator,
-        "src/assets/shaders/phong.slang",
-        .Vertex,
-        true,
-    )).?;
-    const compiled_fragment_shader = (try gpu.compile.CompiledShader.compileBlocking(
-        allocator,
-        "src/assets/shaders/phong.slang",
-        .Fragment,
-        true,
-    )).?;
+    fz.push(@src(), "compile shaders");
+    fz.push(@src(), "read shader");
+    const shader_contents = try std.fs.cwd().readFileAlloc(allocator, "src/assets/shaders/phong.slang", std.math.maxInt(usize));
+    defer allocator.free(shader_contents);
 
-    const vertex_layout = try gpu.slang.ShaderLayout.parseLeaky(allocator, compiled_vertex_shader.layout, "vertexMain");
-    const fragment_layout = try gpu.slang.ShaderLayout.parseLeaky(allocator, compiled_fragment_shader.layout, "fragmentMain");
+    const c_shader_contents = try ffi.CStr(allocator, shader_contents);
+    defer ffi.freeCStr(allocator, c_shader_contents);
 
+    fz.replace(@src(), "compile shader");
+    const shader = try @import("slang").compileShader(allocator, "phong", c_shader_contents);
+
+    // var out = try std.fs.cwd().createFile("phong.spv", .{});
+    // _ = try out.write(shader.spirv);
+    // out.close();
+
+    fz.pop();
+
+    fz.replace(@src(), "parse layouts");
+    const vertex_layout = try gpu.slang.ShaderLayout.parseLeaky(allocator, shader.refl, "vertexMain");
+    const fragment_layout = try gpu.slang.ShaderLayout.parseLeaky(allocator, shader.refl, "fragmentMain");
+
+    fz.replace(@src(), "create pipeline");
     pipeline = gpu.slang.ShaderLayout.createPipelineLeaky(
         allocator,
         device.handle,
         window.handle,
         &vertex_layout,
         &fragment_layout,
-        compiled_vertex_shader.spv,
-        compiled_fragment_shader.spv,
+        shader.spirv,
+        shader.spirv,
         wireframe,
-    ).?;
+    ) orelse {
+        log_gdn.err("Failed to create graphics pipeline!", .{});
+        return error.Failure;
+    };
 
     if (recompile) log_gdn.info("Compiled and reloaded shaders!", .{});
 }
