@@ -100,6 +100,11 @@ pub const Bindings = struct {
 
     // Fragment
 
+    pub const DIFFUSE_MAP = TextureBinding{
+        .stage = .Fragment,
+        .slot = 0,
+    };
+
     pub const FRAGMENT_NORMALS = BufferBinding{
         .type = [4]f32,
         .stage = .Fragment,
@@ -112,13 +117,8 @@ pub const Bindings = struct {
         .slot = 0,
     };
 
-    pub const DIFFUSE_MAP = TextureBinding{
-        .stage = .Fragment,
-        .slot = 0,
-    };
-
-    pub const VIEW_POSITION = UniformBinding{
-        .type = [4]f32,
+    pub const PER_FRAME_FRAGMENT_DATA = UniformBinding{
+        .type = PerFrameFragmentData,
         .stage = .Fragment,
         .slot = 1,
     };
@@ -146,6 +146,12 @@ pub const PerFrameVertexData = extern struct {
     view_proj: [16]f32,
 };
 
+pub const PerFrameFragmentData = extern struct {
+    lights: [16]Light,
+    lightCount: u32,
+    view_pos: [3]f32,
+};
+
 // Vertex Data
 
 pub const VertexInput = extern struct {
@@ -158,15 +164,25 @@ pub const VertexInput = extern struct {
 
 pub const Material = extern struct {
     /// bool
+    basic: u32 = @intFromBool(false),
     flatShading: u32 = @intFromBool(false),
-    __pad0: [12]u8 = .{0} ** 12,
+    __pad1: [8]u8 = .{0} ** 8,
 
     ambientColor: [3]f32 = .{ 1, 1, 1 },
-    __pad1: [4]u8 = .{0} ** 4,
+    __pad2: [4]u8 = .{0} ** 4,
 
     diffuseColor: [3]f32 = .{ 1, 1, 1 },
-    __pad2: [4]u8 = .{0} ** 4,
+    __pad3: [4]u8 = .{0} ** 4,
 
     specularColor: [3]f32 = .{ 1, 1, 1 },
     specularExponent: f32 = 1000,
+};
+
+// Light
+
+pub const Light = extern struct {
+    position: [3]f32,
+    __pad0: [4]u8 = .{0} ** 4,
+    color: [3]f32,
+    __pad1: [4]u8 = .{0} ** 4,
 };

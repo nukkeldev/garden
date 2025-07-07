@@ -3,9 +3,6 @@ const std = @import("std");
 const log = std.log.scoped(.@"gpu.compile");
 const oom = @import("../log.zig").oom;
 
-const EMBEDDED_SHADER = @embedFile("../assets/shaders/compiled/phong.spv");
-const EMBEDDED_SHADER_LAYOUT = @embedFile("../assets/shaders/compiled/phong.slang.layout");
-
 pub const CompiledShader = struct {
     allocator: ?std.mem.Allocator,
 
@@ -19,16 +16,11 @@ pub const CompiledShader = struct {
     };
 
     /// Compile a `.slang` shader for the `stage` and output the resultant file contents.
-    pub fn compileBlocking(allocator: std.mem.Allocator, path: []const u8, stage: Stage, embedded: bool, return_contents: bool) !?@This() {
+    pub fn compileBlocking(allocator: std.mem.Allocator, path: []const u8, stage: Stage, return_contents: bool) !?@This() {
         const entry_point_name = switch (stage) {
             .Vertex => "vertexMain",
             .Fragment => "fragmentMain",
         };
-
-        if (embedded) {
-            log.debug("Using pre-compiled {s} shader.", .{path});
-            return .{ .allocator = null, .spv = EMBEDDED_SHADER, .layout = EMBEDDED_SHADER_LAYOUT, .entry_point_name = entry_point_name };
-        }
 
         // Resolve to an absolute path.
         const abs = try std.fs.cwd().realpathAlloc(allocator, path);
@@ -47,8 +39,10 @@ pub const CompiledShader = struct {
         defer allocator.free(layout_path);
 
         // Ensure the output directory exists.
-        var mkdir = std.process.Child.init(&.{ "mkdir", "-p", dirname }, allocator);
-        _ = try mkdir.spawnAndWait();
+        std.fs.cwd().makeDir(dirname) catch |e| switch (e) {
+            error.PathAlreadyExists => {},
+            else => return e,
+        };
 
         // Create and spawn the child process.
         var child = std.process.Child.init(

@@ -29,10 +29,7 @@ StructuredBuffer<float4> fragmentNormals;
 [[vk::binding(0, 3)]]
 uniform ConstantBuffer<PerMeshFragmentData> perMeshFragmentData;
 [[vk::binding(1, 3)]]
-uniform ConstantBuffer<float3> viewPosition;
-
-static float3 lightColor = float3(1.0, 1.0, 1.0);
-static float3 lightPosition = float3(0.0, 5.0, 0.0);
+uniform ConstantBuffer<PerFrameFragmentData> perFrameFragmentData;
 
 static float specularity = 0.5;
 static float ambientStrength = 0.2;
@@ -45,33 +42,50 @@ Fragment fragmentMain(
     // NOTE: Lighting calculations are done in **world space**.
     Material material = perMeshFragmentData.material;
 
-    // Ambient
-    float3 ambient = (ambientStrength * material.ambientColor) * lightColor;
-
-    // Diffuse
-    float3 norm;
-    if (material.flatShading)
+    if (material.basic)
     {
-        norm = normalize(mul((float3x3)perMeshFragmentData.normalMat, fragmentNormals[fragmentID].xyz));
-    }
-    else
-    {
-        norm = input.normalDirection;
+        Fragment output;
+        output.color = float4(material.diffuseColor, 1.0);
+        return output;
     }
 
-    float3 lightDirection = normalize(lightPosition - input.fragmentPosition);
-    float diff = max(0.0, dot(norm, lightDirection));
-    float3 diffuseColor = diffuseMap.Sample(float2(input.texcoord.x, 1 - input.texcoord.y)).xyz;
-    float3 diffuse = (diff * diffuseColor) * lightColor;
+    float3 color = float3(0.0, 0.0, 0.0);
 
-    // Specular
-    float3 viewDirection = normalize(viewPosition - input.fragmentPosition);
-    float3 reflectedDirection = reflect(-lightDirection, norm);
-    float spec = pow(max(dot(viewDirection, reflectedDirection), 0.0), material.specularExponent);
-    float3 specular = (specularity * spec * material.specularColor) * lightColor;
+    for (int i = 0; i < perFrameFragmentData.lightCount; ++i)
+    {
+        float3 lightColor = perFrameFragmentData.lights[i].color;
+        float3 lightPosition = perFrameFragmentData.lights[i].position;
+
+        // Ambient
+        float3 ambient = (ambientStrength * material.ambientColor) * lightColor;
+
+        // Diffuse
+        float3 norm;
+        if (material.flatShading)
+        {
+            norm = normalize(mul((float3x3)perMeshFragmentData.normalMat, fragmentNormals[fragmentID].xyz));
+        }
+        else
+        {
+            norm = input.normalDirection;
+        }
+
+        float3 lightDirection = normalize(lightPosition - input.fragmentPosition);
+        float diff = max(0.0, dot(norm, lightDirection));
+        float3 diffuseColor = diffuseMap.Sample(float2(input.texcoord.x, 1 - input.texcoord.y)).xyz;
+        float3 diffuse = (diff * diffuseColor) * lightColor;
+
+        // Specular
+        float3 viewDirection = normalize(perFrameFragmentData.viewPosition - input.fragmentPosition);
+        float3 reflectedDirection = reflect(-lightDirection, norm);
+        float spec = pow(max(dot(viewDirection, reflectedDirection), 0.0), material.specularExponent);
+        float3 specular = (specularity * spec * material.specularColor) * lightColor;
+
+        color += ambient + diffuse + specular;
+    }
 
     Fragment output;
-    output.color = float4(ambient + diffuse + specular, 1.0);
+    output.color = float4(color, 1.0);
     // output.color = float4(input.texcoord, 1, 1); // DEBUG TEXCOORDS
     // output.color = float4(input.normalDirection * 0.5 + 0.5, 1.0); // DEBUG NORMALS
     return output;
@@ -110,10 +124,16 @@ struct VertexStageOutput
 {
     float4 sv_position : SV_Position;
     VertexOutput vertex : VertexOutput;
-    float2 texcoord : TEXCOORD;
 };
 
-// Fragment Data
+// Fragment
+
+struct PerFrameFragmentData
+{
+    Light lights[16];
+    uint32_t lightCount;
+    float3 viewPosition;
+}
 
 struct PerMeshFragmentData
 {
@@ -130,10 +150,19 @@ struct Fragment
 
 struct Material
 {
+    bool basic;
     bool flatShading;
 
     float3 ambientColor;
     float3 diffuseColor;
     float3 specularColor;
     float specularExponent;
+}
+
+// Light
+
+struct Light
+{
+    float3 position;
+    float3 color;
 }

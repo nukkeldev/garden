@@ -60,9 +60,10 @@ var camera: DynamicTransfrom = .{
     .rotation = .{ std.math.degreesToRadians(-45), std.math.degreesToRadians(45), 0 },
 };
 var car: Model = undefined;
+var light: Model = undefined;
 
-var dynamic_transforms = [_]*DynamicTransfrom{ &camera, &car.transform };
-var models = [_]*Model{&car};
+var dynamic_transforms = [_]*DynamicTransfrom{ &camera, &car.transform, &light.transform };
+var models = [_]*Model{ &car, &light };
 
 var fov: f32 = INITIAL_FOV;
 var proj_matrix: zm.Mat4f = zm.Mat4f.perspective(std.math.degreesToRadians(INITIAL_FOV), 1.0, 0.05, 100.0);
@@ -186,6 +187,20 @@ fn init() !void {
         // @embedFile("assets/models/cube/Cube.obj"),
         // @embedFile("assets/models/cube/Cube.mtl"),
     );
+
+    light = try Model.initFromObjFile(
+        allocator,
+        &device,
+        "Light",
+        .{
+            .translation = .{ 0.0, 5.0, 0.0 },
+            .scale = @splat(0.1),
+        },
+        "src/assets/models/Cube/cube.obj",
+        "src/assets/models/Cube/cube.mtl",
+        .init(allocator),
+    );
+    light.meshes[0].material.gpu.basic = 1;
 }
 
 fn update() !void {
@@ -282,7 +297,12 @@ fn updateSystems(ticks: u64, dt: u64) !void {
     var fz = FZ.init(@src(), "updateSystems");
     defer fz.end();
 
-    _ = ticks;
+    // Rotating Lights
+    light.transform.translational_velocity = .{
+        @sin(@as(f32, @floatFromInt(ticks)) / 1e9),
+        @cos(@as(f32, @floatFromInt(ticks)) / 1e9),
+        0.0,
+    };
 
     const dt_s = @as(f32, @floatFromInt(dt)) / 1e9;
     for (dynamic_transforms) |t| t.update(dt_s);
@@ -327,19 +347,33 @@ fn render(ticks_ns: u64) !void {
     };
 
     const rpass = try SDL.GPURenderPass.begin(&cmd, &.{color_target_info}, depth_stencil_target_info);
-    rpass.bindGraphicsPipeline(pipeline.?);
 
     fz.replace(@src(), "calc view mat");
     const view_matrix = zm.Mat4f.lookAt(camera.translation, camera.translation + camera.forward(), zm.vec.up(f32));
-    const pfd = gpu.PerFrameVertexData{ .view_proj = proj_matrix.multiply(view_matrix).data };
+    const pfvd = gpu.PerFrameVertexData{ .view_proj = proj_matrix.multiply(view_matrix).data };
 
     fz.replace(@src(), "bind");
-    try gpu.Bindings.PER_FRAME_VERTEX_DATA.bind(&cmd, &pfd);
+    try gpu.Bindings.PER_FRAME_VERTEX_DATA.bind(&cmd, &pfvd);
 
-    const view_position: [4]f32 = .{ camera.translation[0], camera.translation[1], camera.translation[2], 0 };
-    try gpu.Bindings.VIEW_POSITION.bind(&cmd, &view_position);
+    var lights: [16]gpu.Light = undefined;
+    lights[0] = .{
+        .position = light.transform.translation,
+        .color = .{ 1.0, 0.0, 0.0 },
+    };
+    lights[1] = .{
+        .position = light.transform.translation * @as([3]f32, @splat(-1)),
+        .color = .{ 0.0, 1.0, 0.0 },
+    };
+
+    const pffd = gpu.PerFrameFragmentData{
+        .lights = lights,
+        .lightCount = 2,
+        .view_pos = camera.translation,
+    };
+    try gpu.Bindings.PER_FRAME_FRAGMENT_DATA.bind(&cmd, &pffd);
 
     fz.replace(@src(), "draw");
+    rpass.bindGraphicsPipeline(pipeline.?);
     for (models) |model| try model.draw(&cmd, &rpass);
 
     // ImGui Rendering
@@ -372,24 +406,25 @@ fn exit() !void {
     c.SDL_Quit();
 }
 
+// TODO: CASHHHHHH
 fn loadPipeline(recompile: bool) !void {
     var fz = FZ.init(@src(), "loadPipeline");
     defer fz.end();
 
-    if (pipeline != null) c.SDL_ReleaseGPUGraphicsPipeline(device.handle, pipeline);
+    if (pipeline != null) {
+        c.SDL_ReleaseGPUGraphicsPipeline(device.handle, pipeline);
+    }
 
     const compiled_vertex_shader = (try gpu.compile.CompiledShader.compileBlocking(
         allocator,
-        "src/assets/shaders/vertex.slang",
+        "src/assets/shaders/phong.slang",
         .Vertex,
-        pipeline == null,
         true,
     )).?;
     const compiled_fragment_shader = (try gpu.compile.CompiledShader.compileBlocking(
         allocator,
-        "src/assets/shaders/fragment.slang",
+        "src/assets/shaders/phong.slang",
         .Fragment,
-        pipeline == null,
         true,
     )).?;
 
