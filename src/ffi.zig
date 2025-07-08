@@ -219,56 +219,74 @@ pub const SDL = struct {
             allocator: std.mem.Allocator,
             /// the title of the window, in UTF-8 encoding.
             title: []const u8,
-            /// the width of the window.
-            width: u32,
-            /// the height of the window.
-            height: u32,
-            /// 0, or one or more SDL_WindowFlags OR'd together.
-            flags: c.SDL_WindowFlags,
+            /// the (w, h) of the window.
+            size: [2]u32,
+            /// the (x, y)) of the window.
+            position: [2]u32,
         ) !Window {
+            var fz = FZ.init(@src(), "SDL.Window.create");
+            defer fz.end();
+
+            fz.push(@src(), "title -> ctitle");
             const ctitle = try CStr(allocator, title);
             defer freeCStr(allocator, ctitle);
 
             // Create the window.
+            fz.replace(@src(), "SDL_CreateWindowWithProperties");
+            const props = c.SDL_CreateProperties();
+            if (props == 0) err("CreateProperties", "", .{});
+
+            _ = c.SDL_SetStringProperty(props, c.SDL_PROP_WINDOW_CREATE_TITLE_STRING, ctitle);
+            _ = c.SDL_SetBooleanProperty(props, c.SDL_PROP_WINDOW_CREATE_HIGH_PIXEL_DENSITY_BOOLEAN, true);
+            _ = c.SDL_SetBooleanProperty(props, c.SDL_PROP_WINDOW_CREATE_VULKAN_BOOLEAN, true);
+            // TODO: _ = c.SDL_SetBooleanProperty(props, c.SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
+            _ = c.SDL_SetNumberProperty(props, c.SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, @intCast(size[0]));
+            _ = c.SDL_SetNumberProperty(props, c.SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, @intCast(size[1]));
+            _ = c.SDL_SetNumberProperty(props, c.SDL_PROP_WINDOW_CREATE_X_NUMBER, @intCast(position[0]));
+            _ = c.SDL_SetNumberProperty(props, c.SDL_PROP_WINDOW_CREATE_Y_NUMBER, @intCast(position[1]));
+
             var window = Window{
-                .handle = c.SDL_CreateWindow(ctitle, @intCast(width), @intCast(height), flags) orelse {
-                    err("CreateWindow", "title = {s}, width = {}, height = {}, flags = {b}", .{
+                .handle = c.SDL_CreateWindowWithProperties(props) orelse {
+                    err("CreateWindowWithProperties", "title = {s}, size = {any}, position = {any}", .{
                         title,
-                        width,
-                        height,
-                        flags,
+                        size,
+                        position,
                     });
                     return error.SDLError;
                 },
             };
 
             // Scale the window up to the proper display scale.
+            fz.replace(@src(), "sync size");
             _ = try window.syncSizeToDisplayScale();
 
             // Debug the creation.
-            const display = try window.getDisplay();
-            const display_scale = try window.getDisplayScaleAndUpdateCachedValue();
-            const display_mode = display.getCurrentDisplayMode();
+            if (@import("root").DEBUG) {
+                fz.replace(@src(), "debug logging");
+                const display = try window.getDisplay();
+                const display_scale = try window.getDisplayScaleAndUpdateCachedValue();
+                const display_mode = display.getCurrentDisplayMode();
 
-            const position = try window.getPosition();
-            const size = try window.getSizeInPixels();
+                const actual_position = try window.getPosition();
+                const actual_size = try window.getSizeInPixels();
 
-            log.debug(
-                "Window '{s}' created on display '{s}' ({}x{}({d}x)@{d}hz) " ++
-                    "at ({}px, {}px) with a size of ({}px, {}px).",
-                .{
-                    title,
-                    c.SDL_GetDisplayName(display.id),
-                    display_mode.w,
-                    display_mode.h,
-                    display_scale,
-                    display_mode.refresh_rate,
-                    position[0],
-                    position[1],
-                    size[0],
-                    size[1],
-                },
-            );
+                log.debug(
+                    "Window '{s}' created on display '{s}' ({}x{}({d}x)@{d}hz) " ++
+                        "at ({}px, {}px) with a size of ({}px, {}px).",
+                    .{
+                        title,
+                        c.SDL_GetDisplayName(display.id),
+                        display_mode.w,
+                        display_mode.h,
+                        display_scale,
+                        display_mode.refresh_rate,
+                        actual_position[0],
+                        actual_position[1],
+                        actual_size[0],
+                        actual_size[1],
+                    },
+                );
+            }
 
             // Return the new window handle.
             return window;

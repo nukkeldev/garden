@@ -27,7 +27,6 @@ pub const DEBUG = switch (@import("builtin").mode) {
 // Configuration
 
 const INITIAL_WINDOW_SIZE = .{ .width = 1024, .height = 1024 };
-const WINDOW_FLAGS = c.SDL_WINDOW_HIDDEN | c.SDL_WINDOW_HIGH_PIXEL_DENSITY | c.SDL_WINDOW_VULKAN;
 
 const TARGET_FRAMERATE: f32 = 60.0; // FPS
 const TARGET_FRAMETIME_NS: u64 = @intFromFloat(1e9 / TARGET_FRAMERATE);
@@ -102,9 +101,7 @@ fn init() !void {
 
     // Create the window and device.
     fz.replace(@src(), "create window");
-    window = try SDL.Window.create(allocator, "Garden Demo", 1024, 1024, WINDOW_FLAGS);
-    try window.setPosition(c.SDL_WINDOWPOS_CENTERED, c.SDL_WINDOWPOS_CENTERED);
-    try window.show();
+    window = try SDL.Window.create(allocator, "Garden Demo", [2]u32{ 1024, 1024 }, [2]u32{ c.SDL_WINDOWPOS_CENTERED, c.SDL_WINDOWPOS_CENTERED });
 
     fz.replace(@src(), "create gpu device");
     device = try SDL.GPUDevice.createAndClaimForWindow(allocator, c.SDL_GPU_SHADERFORMAT_SPIRV, false, null, &window);
