@@ -17,12 +17,12 @@ const SDL = ffi.SDL;
 const log_gdn = std.log.scoped(.garden);
 const log_imgui = std.log.scoped(.imgui);
 
-pub const std_options: std.Options = .{ .log_level = .debug };
-
 pub const DEBUG = switch (@import("builtin").mode) {
     .Debug, .ReleaseSafe => true,
     .ReleaseFast, .ReleaseSmall => false,
 };
+
+pub const std_options: std.Options = .{ .log_level = if (DEBUG) .debug else .info };
 
 // Configuration
 
@@ -79,7 +79,7 @@ var next_render_ns: u64 = 0;
 var next_update_ns: u64 = 0;
 var should_exit = false;
 
-var debug = true;
+var debug = false;
 var wireframe = false;
 
 var right_mouse_pressed: bool = false;
@@ -458,7 +458,11 @@ fn loadPipeline(recompile: bool) !void {
 }
 
 fn renderDebug(cmd: *const SDL.GPUCommandBuffer, rpass: *const SDL.GPURenderPass, ticks_ns: u64) void {
+    var fz = FZ.init(@src(), "renderDebug");
+    defer fz.end();
+
     // Begin a new ImGui frame.
+    fz.push(@src(), "new frame");
     c.cImGui_ImplSDLGPU3_NewFrame();
     c.cImGui_ImplSDL3_NewFrame();
     c.ImGui_NewFrame();
@@ -467,6 +471,7 @@ fn renderDebug(cmd: *const SDL.GPUCommandBuffer, rpass: *const SDL.GPURenderPass
     // c.ImGui_ShowMetricsWindow(null);
 
     // Show a performance metrics window.
+    fz.replace(@src(), "ui");
     _ = c.ImGui_Begin(
         "-",
         null,
@@ -506,6 +511,7 @@ fn renderDebug(cmd: *const SDL.GPUCommandBuffer, rpass: *const SDL.GPURenderPass
     c.ImGui_End();
 
     // Render ImGui, prepare the draw data and submit the draw calls.
+    fz.replace(@src(), "render");
     c.ImGui_Render();
     const draw_data: *c.ImDrawData = c.ImGui_GetDrawData();
     c.cImgui_ImplSDLGPU3_PrepareDrawData(draw_data, cmd.handle);

@@ -396,6 +396,9 @@ const OBJModel = struct {
 };
 
 pub fn embedTextureMap(allocator: std.mem.Allocator, comptime root: []const u8, comptime files: []const []const u8) !std.StringHashMap(Image) {
+    var fz = FZ.init(@src(), "embedTextureMap");
+    defer fz.end();
+
     var map = std.StringHashMap(Image).init(allocator);
     inline for (files) |file| {
         const contents = try std.fs.cwd().readFileAlloc(allocator, root ++ std.fs.path.sep_str ++ file, std.math.maxInt(usize));

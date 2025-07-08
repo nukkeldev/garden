@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const FZ = @import("perf/tracy.zig").FnZone;
+const DEBUG = @import("root").DEBUG;
 
 // C export
 
@@ -261,7 +262,7 @@ pub const SDL = struct {
             _ = try window.syncSizeToDisplayScale();
 
             // Debug the creation.
-            if (@import("root").DEBUG) {
+            if (DEBUG) {
                 fz.replace(@src(), "debug logging");
                 const display = try window.getDisplay();
                 const display_scale = try window.getDisplayScaleAndUpdateCachedValue();
@@ -302,6 +303,9 @@ pub const SDL = struct {
         /// Note that on some platforms, the visible window may not actually be removed from the screen until the SDL
         /// event loop is pumped again, even though the `SDL_Window` is no longer valid after this call.
         pub fn destroy(window: *Window) !void {
+            var fz = FZ.init(@src(), "SDL.Window.destroy");
+            defer fz.end();
+
             c.SDL_DestroyWindow(window.handle);
         }
 
@@ -415,6 +419,9 @@ pub const SDL = struct {
             /// the y coordinate of the window, or SDL_WINDOWPOS_CENTERED or SDL_WINDOWPOS_UNDEFINED.
             y: u32,
         ) !void {
+            var fz = FZ.init(@src(), "SDL.Window.setPosition");
+            defer fz.end();
+
             if (!c.SDL_SetWindowPosition(window.handle, @intCast(x), @intCast(y))) {
                 err("SetWindowPosition", "x = {}, y = {}", .{ x, y });
                 return error.SDLError;
@@ -447,6 +454,9 @@ pub const SDL = struct {
             std.debug.assert(w > 0);
             std.debug.assert(h > 0);
 
+            var fz = FZ.init(@src(), "SDL.Window.setSize");
+            defer fz.end();
+
             if (!c.SDL_SetWindowSize(window.handle, @intCast(w), @intCast(h))) {
                 err("SetWindowSize", "w = {}, h = {}", .{ w, h });
                 return error.SDLError;
@@ -461,6 +471,9 @@ pub const SDL = struct {
         ///
         /// This function should only be called on the main thread.
         pub fn show(window: *const Window) !void {
+            var fz = FZ.init(@src(), "SDL.Window.show");
+            defer fz.end();
+
             if (!c.SDL_ShowWindow(window.handle)) {
                 err("ShowWindow", "", .{});
                 return error.SDLError;
@@ -482,6 +495,9 @@ pub const SDL = struct {
         ///
         /// This function should only be called on the main thread.
         pub fn sync(window: *const Window) !void {
+            var fz = FZ.init(@src(), "SDL.Window.sync");
+            defer fz.end();
+
             log.debug("Blocking until pending window state is finalized for window '{s}'.", .{window.getTitle()});
             if (!c.SDL_SyncWindow(window.handle)) {
                 err("SyncWindow", "", .{});
@@ -494,6 +510,9 @@ pub const SDL = struct {
         ///
         /// Returns the ratio between the new and old display scales.
         pub fn syncSizeToDisplayScale(window: *Window) !f32 {
+            var fz = FZ.init(@src(), "SDL.Window.syncSizeToDisplayScale");
+            defer fz.end();
+
             const display_scale = try window.getDisplayScale();
             if (display_scale == window.display_scale) return 1;
             defer window.display_scale = display_scale;
@@ -581,6 +600,9 @@ pub const SDL = struct {
             name_opt: ?[]const u8,
             window: *const Window,
         ) !GPUDevice {
+            var fz = FZ.init(@src(), "SDL.GPUDevice.createAndClaimForWindow");
+            defer fz.end();
+
             const device = try create(allocator, format_flags, debug_mode, name_opt);
             try device.claimWindow(window);
             return device;
@@ -607,10 +629,15 @@ pub const SDL = struct {
             /// the preferred GPU driver, or `NULL` to let SDL pick the optimal driver.
             name_opt: ?[]const u8,
         ) !GPUDevice {
+            var fz = FZ.init(@src(), "SDL.GPUDevice.create");
+            defer fz.end();
+
             if (debug_mode) {
                 log.warn("Attempting to create a GPUDevice with `debug_mode` enabled!" ++
                     "This is probably going to cause issues.", .{});
             }
+
+            _ = c.SDL_SetHint(c.SDL_HINT_GPU_DRIVER, "vulkan");
 
             const handle_opt = if (name_opt) |name| outer: {
                 const cname = try CStr(allocator, name);
@@ -644,6 +671,9 @@ pub const SDL = struct {
         ///
         /// This function should only be called from the thread that created the window.
         pub fn claimWindow(device: *const GPUDevice, window: *const Window) !void {
+            var fz = FZ.init(@src(), "SDL.GPUDevice.claimWindow");
+            defer fz.end();
+
             if (!c.SDL_ClaimWindowForGPUDevice(device.handle, window.handle)) {
                 err("ClaimWindowForGPUDevice", "", .{});
                 return error.SDLError;
@@ -657,6 +687,9 @@ pub const SDL = struct {
         /// [SDL_DestroyGPUDevice](https://wiki.libsdl.org/SDL3/SDL_DestroyGPUDevice):
         /// Destroys a GPU context previously returned by `SDL_CreateGPUDevice`.
         pub fn destroy(device: *GPUDevice) !void {
+            var fz = FZ.init(@src(), "SDL.GPUDevice.destroy");
+            defer fz.end();
+
             try device.waitForIdle();
             // I am assuming calling `SDL_ReleaseWindowFromGPUDevice` is unnecessary.
             c.SDL_DestroyGPUDevice(device.handle);
@@ -700,27 +733,34 @@ pub const SDL = struct {
             window: *const Window,
             parameters: SwapchainParameters,
         ) !void {
+            var fz = FZ.init(@src(), "SDL.GPUDevice.setSwapchainParameters");
+            defer fz.end();
+
             // Check that the parameters are supported.
-            if (!c.SDL_WindowSupportsGPUPresentMode(device.handle, window.handle, @intFromEnum(parameters.present_mode))) {
-                log.err(
-                    "Window does not support '{}', defaulting back to {}!",
-                    .{ parameters.present_mode, SwapchainParameters.PresentMode.VSYNC },
-                );
-                return error.SDLError;
-            }
-            if (!c.SDL_WindowSupportsGPUSwapchainComposition(
-                device.handle,
-                window.handle,
-                @intFromEnum(parameters.swapchain_composition),
-            )) {
-                log.err(
-                    "Window does not support '{}', defaulting back to {}!",
-                    .{ parameters.swapchain_composition, SwapchainParameters.SwapchainComposition.SDR },
-                );
-                return error.SDLError;
+            if (DEBUG) {
+                fz.push(@src(), "check support");
+                if (!c.SDL_WindowSupportsGPUPresentMode(device.handle, window.handle, @intFromEnum(parameters.present_mode))) {
+                    log.err(
+                        "Window does not support '{}', defaulting back to {}!",
+                        .{ parameters.present_mode, SwapchainParameters.PresentMode.VSYNC },
+                    );
+                    return error.SDLError;
+                }
+                if (!c.SDL_WindowSupportsGPUSwapchainComposition(
+                    device.handle,
+                    window.handle,
+                    @intFromEnum(parameters.swapchain_composition),
+                )) {
+                    log.err(
+                        "Window does not support '{}', defaulting back to {}!",
+                        .{ parameters.swapchain_composition, SwapchainParameters.SwapchainComposition.SDR },
+                    );
+                    return error.SDLError;
+                }
             }
 
             // Set the parameters.
+            fz.replace(@src(), "SDL_SetGPUSwapchainParameters");
             if (!c.SDL_SetGPUSwapchainParameters(
                 device.handle,
                 window.handle,
@@ -761,6 +801,9 @@ pub const SDL = struct {
         ///
         /// The minimum value of allowed frames in flight is 1, and the maximum is 3.
         pub fn setAllowedFramesInFlight(device: *const GPUDevice, allowed_frames_in_flight: u32) !void {
+            var fz = FZ.init(@src(), "SDL.GPUDevice.setAllowedFramesInFlight");
+            defer fz.end();
+
             if (!c.SDL_SetGPUAllowedFramesInFlight(device.handle, allowed_frames_in_flight)) {
                 err("SetGPUAllowedFramesInFlight", "allowed_frames_in_flight = {}", .{allowed_frames_in_flight});
                 return error.SDLError;
@@ -791,6 +834,9 @@ pub const SDL = struct {
         /// commands between the two command buffers reduces the total amount of passes overall which improves rendering
         /// performance.
         pub fn acquire(device: *const GPUDevice) !GPUCommandBuffer {
+            var fz = FZ.init(@src(), "SDL.GPUCommandBuffer.acquire");
+            defer fz.end();
+
             return .{
                 .handle = c.SDL_AcquireGPUCommandBuffer(device.handle) orelse {
                     err("AcquireGPUCommandBuffer", "", .{});
@@ -809,6 +855,9 @@ pub const SDL = struct {
         /// All commands in the submission are guaranteed to begin executing before any command in a subsequent
         /// submission begins executing.
         pub fn submit(cmd: *const GPUCommandBuffer) !void {
+            var fz = FZ.init(@src(), "SDL.GPUCommandBuffer.submit");
+            defer fz.end();
+
             if (!c.SDL_SubmitGPUCommandBuffer(cmd.handle)) {
                 err("SubmitGPUCommandBuffer", "", .{});
                 return error.SDLError;
@@ -834,6 +883,9 @@ pub const SDL = struct {
         ///
         /// The swapchain texture is write-only and cannot be used as a sampler or for another reading operation.
         pub fn waitAndAcquireSwapchainTexture(cmd: *const GPUCommandBuffer, window: *const Window) !?*c.SDL_GPUTexture {
+            var fz = FZ.init(@src(), "SDL.GPUCommandBuffer.waitAndAcquireSwapchainTexture");
+            defer fz.end();
+
             var texture: ?*c.SDL_GPUTexture = null;
             if (!c.SDL_WaitAndAcquireGPUSwapchainTexture(cmd.handle, window.handle, &texture, null, null)) {
                 err("WaitAndAcquireGPUSwapchainTexture", "", .{});
@@ -860,6 +912,9 @@ pub const SDL = struct {
             /// client data to write.
             data: *const T,
         ) void {
+            var fz = FZ.init(@src(), "SDL.GPUCommandBuffer.pushUniformData");
+            defer fz.end();
+
             switch (Stage) {
                 .Vertex => c.SDL_PushGPUVertexUniformData(cmd.handle, slot, @ptrCast(data), @sizeOf(T)),
                 .Fragment => c.SDL_PushGPUFragmentUniformData(cmd.handle, slot, @ptrCast(data), @sizeOf(T)),
@@ -908,6 +963,10 @@ pub const SDL = struct {
         ///         Defaults to zero.
         ///     `SDL_PROP_GPU_TEXTURE_CREATE_NAME_STRING`: a name that can be displayed in debugging tools.
         pub fn create(allocator: std.mem.Allocator, device: *const GPUDevice, name: []const u8, create_info: c.SDL_GPUTextureCreateInfo) !GPUTexture {
+            var fz = FZ.init(@src(), "SDL.GPUTexture.create");
+            defer fz.end();
+
+            // TODO: Don't use global properties (see Window.create).
             try setGlobalStringProperty(allocator, c.SDL_PROP_GPU_TEXTURE_CREATE_NAME_STRING, name);
 
             var ci = create_info;
@@ -930,7 +989,7 @@ pub const SDL = struct {
             image: *const @import("img").Image,
             name: []const u8,
         ) !SDL.GPUTexture {
-            var fz = FZ.init(@src(), "SDL.GPUTexture.createAndUploadPNG");
+            var fz = FZ.init(@src(), "SDL.GPUTexture.createAndUploadImage");
             defer fz.end();
 
             log.debug("Loading {s} image '{s}' into GPUTexture.", .{ @tagName(image.pixelFormat()), name });
@@ -947,6 +1006,7 @@ pub const SDL = struct {
                 .usage = c.SDL_GPU_TEXTUREUSAGE_SAMPLER,
             };
 
+            fz.push(@src(), "create");
             const texture: GPUTexture = try GPUTexture.create(
                 allocator,
                 device,
@@ -955,6 +1015,7 @@ pub const SDL = struct {
             );
 
             // Upload the image data to the texture.
+            fz.replace(@src(), "upload");
             try cpass.uploadImageToTexture(tbuf, device, &texture, image, true, false);
 
             return texture;
@@ -965,6 +1026,9 @@ pub const SDL = struct {
         ///
         /// You must not reference the texture after calling this function.
         pub fn release(texture: *const GPUTexture, device: *const GPUDevice) void {
+            var fz = FZ.init(@src(), "SDL.GPUTexture.release");
+            defer fz.end();
+
             c.SDL_ReleaseGPUTexture(device.handle, texture.handle);
         }
 
@@ -980,6 +1044,10 @@ pub const SDL = struct {
         /// [SDL_CreateGPUSampler](https://wiki.libsdl.org/SDL3/SDL_CreateGPUSampler):
         /// Creates a sampler object to be used when binding textures in a graphics workflow.
         pub fn create(allocator: std.mem.Allocator, device: *const GPUDevice, name: []const u8, create_info: c.SDL_GPUSamplerCreateInfo) !GPUSampler {
+            var fz = FZ.init(@src(), "SDL.GPUSampler.create");
+            defer fz.end();
+
+            // TODO: Don't use global properties (see Window.create).
             try setGlobalStringProperty(allocator, c.SDL_PROP_GPU_SAMPLER_CREATE_NAME_STRING, name);
 
             var ci = create_info;
@@ -998,6 +1066,9 @@ pub const SDL = struct {
         ///
         /// You must not reference the sampler after calling this function.
         pub fn release(sampler: *const GPUSampler, device: *const GPUDevice) void {
+            var fz = FZ.init(@src(), "SDL.GPUSampler.release");
+            defer fz.end();
+
             c.SDL_ReleaseGPUSampler(device.handle, sampler.handle);
         }
     };
@@ -1022,6 +1093,9 @@ pub const SDL = struct {
             color_target_infos: []const c.SDL_GPUColorTargetInfo,
             depth_stencil_target_info: c.SDL_GPUDepthStencilTargetInfo,
         ) !GPURenderPass {
+            var fz = FZ.init(@src(), "SDL.GPURenderPass.begin");
+            defer fz.end();
+
             return .{
                 .handle = c.SDL_BeginGPURenderPass(
                     cmd.handle,
@@ -1040,6 +1114,9 @@ pub const SDL = struct {
         ///
         /// All bound graphics state on the render pass command buffer is unset. The render pass handle is now invalid.
         pub fn end(rpass: *const GPURenderPass) void {
+            var fz = FZ.init(@src(), "SDL.GPURenderPass.end");
+            defer fz.end();
+
             c.SDL_EndGPURenderPass(rpass.handle);
         }
 
@@ -1066,6 +1143,9 @@ pub const SDL = struct {
         ///
         /// A graphics pipeline must be bound before making any draw calls.
         pub fn bindGraphicsPipeline(rpass: *const GPURenderPass, pipeline: *c.SDL_GPUGraphicsPipeline) void {
+            var fz = FZ.init(@src(), "SDL.GPURenderPass.bindGraphicsPipeline");
+            defer fz.end();
+
             c.SDL_BindGPUGraphicsPipeline(rpass.handle, pipeline);
         }
 
@@ -1079,6 +1159,9 @@ pub const SDL = struct {
             buffer: *const GPUBuffer,
             offset: u32,
         ) !void {
+            var fz = FZ.init(@src(), "SDL.GPURenderPass.bindBuffer");
+            defer fz.end();
+
             const binding = c.SDL_GPUBufferBinding{ .buffer = buffer.handle, .offset = offset };
             switch (purpose) {
                 .Vertex => c.SDL_BindGPUVertexBuffers(rpass.handle, slot, &binding, 1),
@@ -1123,6 +1206,9 @@ pub const SDL = struct {
             vertex_offset: i32,
             first_instance: u32,
         ) void {
+            var fz = FZ.init(@src(), "SDL.GPURenderPass.drawIndexedPrimitives");
+            defer fz.end();
+
             c.SDL_DrawGPUIndexedPrimitives(
                 rpass.handle,
                 num_indices,
@@ -1145,6 +1231,9 @@ pub const SDL = struct {
         /// All operations related to copying to or from buffers or textures take place inside a copy pass. You must not
         /// begin another copy pass, or a render pass or compute pass before ending the copy pass.
         pub fn begin(cmd: *const GPUCommandBuffer) !GPUCopyPass {
+            var fz = FZ.init(@src(), "SDL.GPUCopyPass.begin");
+            defer fz.end();
+
             return .{
                 .handle = c.SDL_BeginGPUCopyPass(cmd.handle) orelse {
                     err("BeginGPUCopyPass", "", .{});
@@ -1156,6 +1245,9 @@ pub const SDL = struct {
         /// [SDL_EndGPUCopyPass](https://wiki.libsdl.org/SDL3/SDL_EndGPUCopyPass):
         /// Ends the current copy pass.
         pub fn end(cpass: *const GPUCopyPass) void {
+            var fz = FZ.init(@src(), "SDL.GPUCopyPass.end");
+            defer fz.end();
+
             c.SDL_EndGPUCopyPass(cpass.handle);
         }
 
@@ -1178,12 +1270,12 @@ pub const SDL = struct {
             cycle_tbuf: bool,
             cycle_buf: bool,
         ) !void {
-            var fz = FZ.init(@src(), "SDL.GPUCopyPass.upload");
+            var fz = FZ.init(@src(), "SDL.GPUCopyPass.uploadBuffer");
             defer fz.end();
 
             // Check pre-conditions for upload.
             const data_size = data.len * @sizeOf(T);
-            if (tbuf.size < data_size) {
+            if (DEBUG and tbuf.size < data_size) {
                 log.err("Transfer buffer size ({} bytes) is less than the size of the data ({} bytes)!", .{ tbuf.size, data_size });
                 return error.TransferBufferSizeTooSmall;
             }
@@ -1192,9 +1284,9 @@ pub const SDL = struct {
             fz.push(@src(), "memcpy");
             @memcpy(try tbuf.map(T, device, cycle_tbuf), data);
             tbuf.unmap(device);
-            fz.pop();
 
             // Upload the transfer buffer to the buffer.
+            fz.replace(@src(), "upload");
             c.SDL_UploadToGPUBuffer(
                 cpass.handle,
                 &.{ .transfer_buffer = tbuf.handle, .offset = 0 },
@@ -1218,12 +1310,12 @@ pub const SDL = struct {
             cycle_tbuf: bool,
             cycle_tex: bool,
         ) !void {
-            var fz = FZ.init(@src(), "SDL.GPUCopyPass.upload");
+            var fz = FZ.init(@src(), "SDL.GPUCopyPass.uploadImageToTexture");
             defer fz.end();
 
             // Check pre-conditions for upload.
             const data_size = image.imageByteSize();
-            if (tbuf.size < data_size) {
+            if (DEBUG and tbuf.size < data_size) {
                 log.err("Transfer buffer size ({} bytes) is less than the size of the data ({} bytes)!", .{ tbuf.size, data_size });
                 return error.TransferBufferSizeTooSmall;
             }
@@ -1235,6 +1327,7 @@ pub const SDL = struct {
             fz.pop();
 
             // Upload the transfer buffer to the buffer.
+            fz.replace(@src(), "upload");
             c.SDL_UploadToGPUTexture(
                 cpass.handle,
                 &.{ .transfer_buffer = tbuf.handle, .offset = 0 },
@@ -1269,6 +1362,10 @@ pub const SDL = struct {
         ///
         ///     `SDL_PROP_GPU_BUFFER_CREATE_NAME_STRING`: a name that can be displayed in debugging tools.
         pub fn create(allocator: std.mem.Allocator, device: *const GPUDevice, name: []const u8, usage: c.SDL_GPUBufferUsageFlags, size: u32) !GPUBuffer {
+            var fz = FZ.init(@src(), "SDL.GPUBuffer.create");
+            defer fz.end();
+
+            // TODO: See previous usages.
             try setGlobalStringProperty(allocator, c.SDL_PROP_GPU_BUFFER_CREATE_NAME_STRING, name);
             return .{
                 .handle = c.SDL_CreateGPUBuffer(device.handle, &.{
@@ -1297,6 +1394,7 @@ pub const SDL = struct {
             var fz = FZ.init(@src(), "SDL.GPUBuffer.createAndUploadData");
             defer fz.end();
 
+            fz.push(@src(), "create");
             const buffer: SDL.GPUBuffer = try SDL.GPUBuffer.create(
                 allocator,
                 device,
@@ -1304,6 +1402,7 @@ pub const SDL = struct {
                 usage,
                 @intCast(@sizeOf(T) * data.len),
             );
+            fz.replace(@src(), "upload");
             try cpass.uploadBuffer(tbuf, device, &buffer, T, data, true, false);
 
             return buffer;
@@ -1314,6 +1413,9 @@ pub const SDL = struct {
         ///
         /// You must not reference the buffer after calling this function.
         pub fn release(buffer: *const GPUBuffer, device: *const GPUDevice) void {
+            var fz = FZ.init(@src(), "SDL.GPUBuffer.release");
+            defer fz.end();
+
             c.SDL_ReleaseGPUBuffer(device.handle, buffer.handle);
         }
     };
@@ -1335,6 +1437,10 @@ pub const SDL = struct {
             ///
             ///     `SDL_PROP_GPU_TRANSFERBUFFER_CREATE_NAME_STRING`: a name that can be displayed in debugging tools.
             pub fn create(allocator: std.mem.Allocator, device: *const GPUDevice, size: usize, name: []const u8) !@This() {
+                var fz = FZ.init(@src(), "SDL.GPUTransferBuffer.create");
+                defer fz.end();
+
+                // TODO: See previous usages.
                 try setGlobalStringProperty(allocator, c.SDL_PROP_GPU_TRANSFERBUFFER_CREATE_NAME_STRING, name);
                 return .{
                     .size = size,
@@ -1357,6 +1463,9 @@ pub const SDL = struct {
             ///
             /// You must not reference the transfer buffer after calling this function.
             pub fn release(tbuf: *const @This(), device: *const GPUDevice) void {
+                var fz = FZ.init(@src(), "SDL.GPUTransferBuffer.release");
+                defer fz.end();
+
                 c.SDL_ReleaseGPUTransferBuffer(device.handle, tbuf.handle);
             }
 
@@ -1368,6 +1477,9 @@ pub const SDL = struct {
             /// You must unmap the transfer buffer before encoding upload commands. The memory is owned by the graphics
             /// driver - do NOT call `SDL_free()` on the returned pointer.
             pub fn map(tbuf: *const @This(), comptime T: type, device: *const GPUDevice, cycle: bool) ![*]T {
+                var fz = FZ.init(@src(), "SDL.GPUTransferBuffer.map");
+                defer fz.end();
+
                 return @ptrCast(@alignCast(c.SDL_MapGPUTransferBuffer(
                     device.handle,
                     tbuf.handle,
@@ -1381,6 +1493,9 @@ pub const SDL = struct {
             /// [SDL_UnmapGPUTransferBuffer](https://wiki.libsdl.org/SDL3/SDL_UnmapGPUTransferBuffer):
             /// Unmaps a previously mapped transfer buffer.
             pub fn unmap(tbuf: *const @This(), device: *const GPUDevice) void {
+                var fz = FZ.init(@src(), "SDL.GPUTransferBuffer.unmap");
+                defer fz.end();
+
                 c.SDL_UnmapGPUTransferBuffer(device.handle, tbuf.handle);
             }
 
