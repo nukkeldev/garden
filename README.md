@@ -2,6 +2,16 @@
 
 A performance-focused multi-media engine.
 
+## Building
+
+Unfortunately, building is not as simple as `zig build`.
+
+1. `sh build_deps.sh` - Builds all dependencies (NRI, Slang, etc.) with complex build steps. The artifacts of these are
+                        saved into `external/<lib>/*`. The dependency sources are pulled from `tools/dependency-manager` 
+                        which references `build_config.zon`.
+2. `zig build` - Builds everything else; will detect if step 1's dependencies haven't been built and run step 1 with
+                 default settings if so.
+
 ## TODO
 
 - [x] Basic Rendering
