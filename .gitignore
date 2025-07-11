@@ -1,8 +1,8 @@
 .direnv/
 .vscode/
 
-zig-out/
-.zig-cache/
+**/zig-out/
+**/.zig-cache/
 
 src/assets/models
 src/assets/shaders/compiled
