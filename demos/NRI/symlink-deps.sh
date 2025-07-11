@@ -16,6 +16,8 @@ INCLUDE_DIR="$PROJECT_ROOT/demos/NRI/include"
 mkdir -p "$BIN_DIR" "$INCLUDE_DIR"
 
 ln -sf "$PROJECT_ROOT/external/NRI/_Bin/Release" "$BIN_DIR/NRI"
+ln -sf "$PROJECT_ROOT/external/NRI/_Bin/Release/NRI.dll" "$SCRIPT_DIR/zig-out/bin/NRI.dll"
+
 ln -sf "$PROJECT_ROOT/external/glfw/build/src/Debug" "$BIN_DIR/GLFW"
 
 ln -sf "$PROJECT_ROOT/external/NRI/Include" "$INCLUDE_DIR/NRI"

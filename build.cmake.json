@@ -5,12 +5,17 @@
             "url": "https://github.com/NVIDIA-RTX/NRI",
             "ref": "v172",
             "comments": [
-                "TODO: cmake --build has --jobs hardcoded."
+                "TODO: cmake --build has --jobs hardcoded.",
+                "SharedLibrary.hpp and SharedExternal.hpp have missing dependencies?"
             ],
-            "instructions": [
+            "source-instructions": [
+                "sed -i '6i #include <windows.h>\n' Source/Shared/SharedLibrary.hpp",
+                "sed -i '3i #include <cstdarg>\n' Source/Shared/SharedExternal.hpp"
+            ],
+            "build-instructions": [
                 "mkdir -p _Build",
                 "cd _Build",
-                "cmake .. -DNRI_STATIC_LIBRARY=ON -DNRI_ENABLE_IMGUI_EXTENSION=ON -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>",
+                "cmake .. -DNRI_ENABLE_AGILITY_SDK_SUPPORT=OFF -DNRI_ENABLE_D3D11_SUPPORT=OFF -DNRI_ENABLE_D3D12_SUPPORT=OFF -DNRI_ENABLE_IMGUI_EXTENSION=ON -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>",
                 "cmake --build . --config Release --parallel 16",
                 "cd .."
             ]
@@ -19,7 +24,7 @@
             "name": "GLFW",
             "url": "https://github.com/glfw/glfw",
             "ref": "d11cb3779b828116af6391dfc07c147fa5e0a1c3",
-            "instructions": [
+            "build-instructions": [
                 "cmake -S . -B build -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug> -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF",
                 "cd build",
                 "cmake --build . --parallel 16"

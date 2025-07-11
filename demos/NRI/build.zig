@@ -4,6 +4,12 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // --
+
+    if (target.result.os.tag == .windows and target.result.abi != .msvc) {
+        @panic("Cannot compile on windows without MSVC! Please specify -Dtarget=*-window-msvc");
+    }
+
     // ---
 
     const mod = b.createModule(.{
@@ -22,12 +28,16 @@ pub fn build(b: *std.Build) void {
     // ---
 
     mod.addIncludePath(b.path("include"));
+    mod.addIncludePath(.{ .cwd_relative = "C:/VulkanSDK/1.4.313.2/Include/" });
 
     // ---
 
+    mod.addLibraryPath(.{ .cwd_relative = "C:/VulkanSDK/1.4.313.2/Lib" });
+    mod.addLibraryPath(b.path("bin/NRI/"));
+    mod.addLibraryPath(b.path("bin/GLFW/"));
+
     mod.addObjectFile(b.path("bin/NRI/NRI.lib"));
-    // TODO: error: lld-link: D:\Development\Zig\garden\demos\NRI\bin\NRI\amd_ags_x64.dll: bad file type. Did you specify a DLL instead of an import library?
-    // mod.addObjectFile(b.path("bin/NRI/amd_ags_x64.dll"));
+    mod.linkSystemLibrary("vulkan-1", .{});
 
     // ---
 

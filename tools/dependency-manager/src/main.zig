@@ -12,7 +12,8 @@ const Dependency = struct {
     name: []const u8,
     url: []const u8,
     ref: []const u8,
-    instructions: []const []const u8,
+    @"source-instructions": []const []const u8 = &.{},
+    @"build-instructions": []const []const u8,
 };
 
 pub fn main() !void {
@@ -115,6 +116,39 @@ pub fn main() !void {
             } else {
                 std.log.info("Fetched repostitory.", .{});
             }
+        } else {
+            for (dep.@"source-instructions") |inst| {
+                var instruction = std.ArrayList([]const u8).init(allocator);
+                var split = std.mem.splitAny(u8, inst, &std.ascii.whitespace);
+                while (split.next()) |arg| try instruction.append(arg);
+
+                if (!dry_run) std.debug.print("\n---\n", .{});
+
+                std.debug.print("  ", .{});
+                for (instruction.items) |_inst| std.debug.print("{s} ", .{_inst});
+
+                if (!dry_run) {
+                    std.debug.print("\n", .{});
+
+                    if (std.mem.eql(u8, instruction.items[0], "cd")) {
+                        const new_cwd = try std.fs.cwd().openDir(instruction.items[1], .{});
+                        try new_cwd.setAsCwd();
+                        continue;
+                    }
+
+                    var child = std.process.Child.init(instruction.items, allocator);
+                    const term = try child.spawnAndWait();
+
+                    std.debug.print("\n---\n{s}: {}", .{ @tagName(term), switch (term) {
+                        .Exited => |c| @as(usize, @intCast(c)),
+                        .Signal => |c| @as(usize, @intCast(c)),
+                        .Stopped => |c| @as(usize, @intCast(c)),
+                        .Unknown => |c| @as(usize, @intCast(c)),
+                    } });
+                }
+
+                std.debug.print("\n", .{});
+            }
         }
 
         const git_checkout_results = try std.process.Child.run(.{
@@ -136,7 +170,7 @@ pub fn main() !void {
 
         std.log.info("Running build instructions...", .{});
 
-        for (dep.instructions) |inst| {
+        for (dep.@"build-instructions") |inst| {
             var instruction = std.ArrayList([]const u8).init(allocator);
             var split = std.mem.splitAny(u8, inst, &std.ascii.whitespace);
             while (split.next()) |arg| try instruction.append(arg);

@@ -4,6 +4,7 @@ const c = @cImport({
     // GLFW
     @cDefine("GLFW_DLL", {});
     @cDefine("GLFW_INCLUDE_NONE", {});
+    @cDefine("GLFW_INCLUDE_VULKAN", {});
     @cInclude("GLFW/glfw3.h");
 
     // NRI
@@ -37,14 +38,14 @@ pub fn main() !void {
         c.glfwPollEvents();
     }
 
-    // var result: c.NriResult = undefined;
+    var result: c.NriResult = undefined;
 
-    // var adapters: [2]c.NriAdapterDesc = undefined;
-    // result = c.nriEnumerateAdapters(&adapters, null);
-    // if (result != c.NriResult_SUCCESS) {
-    //     std.log.err("nriEnumerateAdapters(): {}", .{result});
-    //     return error.NriError;
-    // }
+    var adapters: [2]c.NriAdapterDesc = undefined;
+    result = c.nriEnumerateAdapters(&adapters, null);
+    if (result != c.NriResult_SUCCESS) {
+        std.log.err("nriEnumerateAdapters(): {}", .{result});
+        return error.NriError;
+    }
 
-    // for (adapters, 0..) |adapter, i| std.log.info("Adapter {}: {}", .{ i, adapter });
+    for (adapters, 0..) |adapter, i| std.log.info("Adapter {}: {}", .{ i, adapter });
 }
