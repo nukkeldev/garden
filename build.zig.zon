@@ -40,10 +40,6 @@
         .slang = .{
             .path = "tools/shader-compiler",
         },
-        .NRI = .{
-            .url = "git+https://github.com/NVIDIA-RTX/NRI?ref=v171#344f1c1913d84fa312f9827301885085df5634df",
-            .hash = "N-V-__8AABSxHgC6wmPHzk8Rfu5L8eeDd-FTEgKebmWJPYer",
-        },
     },
     .paths = .{
         "build.zig",

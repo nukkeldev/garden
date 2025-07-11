@@ -1,0 +1,19 @@
+{
+    "dependencies": [
+        {
+            "name": "NRI",
+            "url": "https://github.com/NVIDIA-RTX/NRI",
+            "ref": "v172",
+            "comments": [
+                "TODO: cmake --build has --jobs hardcoded."
+            ],
+            "instructions": [
+                "mkdir -p _Build",
+                "cd _Build",
+                "cmake .. -DNRI_ENABLE_IMGUI_EXTENSION=ON -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>",
+                "cmake --build . --config Release --parallel 16",
+                "cd .."
+            ]
+        }
+    ]
+}
