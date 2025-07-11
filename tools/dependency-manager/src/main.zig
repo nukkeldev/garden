@@ -60,12 +60,11 @@ pub fn main() !void {
     // ---
 
     const build_folder = try cwd.makeOpenPath(BUILD_FOLDER, .{});
-    try build_folder.setAsCwd();
-
     const build_folder_path = try build_folder.realpathAlloc(allocator, ".");
     std.log.info("Dependency Build Folder: '{s}''.", .{build_folder_path});
 
     for (deps.dependencies) |dep| {
+        try build_folder.setAsCwd();
         std.log.info("Processing dependency '{s}' from '{s}'.", .{ dep.name, dep.url });
 
         // ---
@@ -86,7 +85,7 @@ pub fn main() !void {
                 .argv = &.{ "git", "clone", dep.url },
             });
 
-            if (clone_results.stderr.len > 0) {
+            if (!std.mem.eql(u8, @tagName(clone_results.term), "Exited") or clone_results.term.Exited != 0) {
                 std.log.err(
                     "Cloning the dependency had an error!\n--\n{s}\n--\nSkipping dependency...",
                     .{std.mem.trim(u8, clone_results.stderr, &std.ascii.whitespace)},
@@ -107,7 +106,7 @@ pub fn main() !void {
                 .allocator = allocator,
                 .argv = &.{ "git", "fetch" },
             });
-            if (git_fetch_results.stderr.len > 0) {
+            if (!std.mem.eql(u8, @tagName(git_fetch_results.term), "Exited") or git_fetch_results.term.Exited != 0) {
                 std.log.err(
                     "Fetching had an error!\n--\n{s}\n--\nSkipping dependency...",
                     .{std.mem.trim(u8, git_fetch_results.stderr, &std.ascii.whitespace)},
@@ -122,7 +121,7 @@ pub fn main() !void {
             .allocator = allocator,
             .argv = &.{ "git", "checkout", dep.ref },
         });
-        if (std.mem.indexOf(u8, git_checkout_results.stderr, "HEAD is now at") == null) {
+        if (!std.mem.eql(u8, @tagName(git_checkout_results.term), "Exited") or git_checkout_results.term.Exited != 0) {
             std.log.err(
                 "Checking the ref out had an error!\n--\n{s}\n--\nSkipping dependency...",
                 .{std.mem.trim(u8, git_checkout_results.stderr, &std.ascii.whitespace)},

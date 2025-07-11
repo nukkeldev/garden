@@ -10,9 +10,19 @@
             "instructions": [
                 "mkdir -p _Build",
                 "cd _Build",
-                "cmake .. -DNRI_ENABLE_IMGUI_EXTENSION=ON -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>",
+                "cmake .. -DNRI_STATIC_LIBRARY=ON -DNRI_ENABLE_IMGUI_EXTENSION=ON -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>",
                 "cmake --build . --config Release --parallel 16",
                 "cd .."
+            ]
+        },
+        {
+            "name": "GLFW",
+            "url": "https://github.com/glfw/glfw",
+            "ref": "d11cb3779b828116af6391dfc07c147fa5e0a1c3",
+            "instructions": [
+                "cmake -S . -B build -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug> -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF",
+                "cd build",
+                "cmake --build . --parallel 16"
             ]
         }
     ]

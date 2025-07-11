@@ -11,3 +11,5 @@ imgui.ini
 
 traces/
 external/*
+
+*.exe
