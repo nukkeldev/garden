@@ -33,8 +33,8 @@ pub const std_options: std.Options = .{ .log_level = if (DEBUG) .debug else .inf
 // -- Constants -- //
 
 const GRAPHICS_API = c.NriGraphicsAPI_VK;
-const DEBUG_API = true;
-const DEBUG_NRI = true;
+const VALIDATE_API = true;
+const VALIDATE_NRI = true;
 const VK_BINDING_OFFSETS = c.NriVKBindingOffsets{
     .samplerOffset = 0,
     .textureOffset = 128,
@@ -63,7 +63,7 @@ pub fn main() !void {
     if (c.glfwInit() == c.GLFW_FALSE) return error.GLFWInitFailure;
     defer c.glfwTerminate();
 
-    // ---
+    // --- [ INIT ]
 
     std.log.info("Using NRI Version: {}", .{c.NRI_VERSION});
 
@@ -83,8 +83,8 @@ pub fn main() !void {
 
     const device_creation_desc = c.NriDeviceCreationDesc{
         .graphicsAPI = GRAPHICS_API,
-        .enableGraphicsAPIValidation = DEBUG_API,
-        .enableNRIValidation = DEBUG_NRI,
+        .enableGraphicsAPIValidation = VALIDATE_API,
+        .enableNRIValidation = VALIDATE_NRI,
         .vkBindingOffsets = VK_BINDING_OFFSETS,
         // .vkExtensions = ...,
         .adapterDesc = &adapterDescs[0],
@@ -221,122 +221,134 @@ pub fn main() !void {
         try enri(result);
     }
 
-    // ---
+    // --- [ INIT ] => [ RENDER ] [ UPDATE ]
 
-    const frame_index: usize = 0 % QUEUED_FRAME_NUM;
-    const queued_frame = &queued_frames[frame_index];
+    var frame_index: usize = 0;
+    while (c.glfwWindowShouldClose(window) == c.GLFW_FALSE) : (frame_index += 1) {
+        c.glfwPollEvents();
 
-    const swapchain_acquire_semaphore = swapchain_texture_textures[frame_index].acquire_semaphore;
-    {
-        var current_swapchain_texture_index: u32 = 0;
-        result = swapchain_interface.AcquireNextTexture.?(swapchain, swapchain_acquire_semaphore, &current_swapchain_texture_index);
-        try enri(result);
+        const queued_frame_index = frame_index % QUEUED_FRAME_NUM;
+        const queued_frame = &queued_frames[queued_frame_index];
 
-        const swapchain_texture = &swapchain_texture_textures[current_swapchain_texture_index];
+        core_interface.Wait.?(frame_fence, if (frame_index >= QUEUED_FRAME_NUM) 1 + frame_index - QUEUED_FRAME_NUM else 0);
+        core_interface.ResetCommandAllocator.?(queued_frame.command_allocator);
 
-        const command_buffer = queued_frame.command_buffer;
-        result = core_interface.BeginCommandBuffer.?(command_buffer, null);
-        try enri(result);
+        const recycled_semaphore_index = frame_index % swapchain_texture_textures.len;
+        const swapchain_acquire_semaphore = swapchain_texture_textures[recycled_semaphore_index].acquire_semaphore;
+
         {
-            var texture_barriers = c.NriTextureBarrierDesc{
-                .texture = swapchain_texture.texture,
-                .after = .{ .access = c.NriAccessBits_COLOR_ATTACHMENT, .layout = c.NriLayout_COLOR_ATTACHMENT },
-                .layerNum = 1,
-                .mipNum = 1,
-            };
+            var current_swapchain_texture_index: u32 = 0;
+            result = swapchain_interface.AcquireNextTexture.?(swapchain, swapchain_acquire_semaphore, &current_swapchain_texture_index);
+            try enri(result);
 
-            const barrier_group_desc = c.NriBarrierGroupDesc{
-                .textureNum = 1,
-                .textures = &texture_barriers,
-            };
-            core_interface.CmdBarrier.?(command_buffer, &barrier_group_desc);
+            const swapchain_texture = &swapchain_texture_textures[current_swapchain_texture_index];
 
-            const attachments_desc = c.NriAttachmentsDesc{
-                .colorNum = 1,
-                .colors = &swapchain_texture.color_attachment,
-            };
-
-            core_interface.CmdBeginRendering.?(command_buffer, &attachments_desc);
+            const command_buffer = queued_frame.command_buffer;
+            result = core_interface.BeginCommandBuffer.?(command_buffer, null);
+            try enri(result);
             {
-                // Tracy goes here.
-
-                var clear_desc = c.NriClearDesc{
-                    .colorAttachmentIndex = 0,
-                    .planes = c.NriPlaneBits_COLOR,
+                var texture_barriers = c.NriTextureBarrierDesc{
+                    .texture = swapchain_texture.texture,
+                    .after = .{ .access = c.NriAccessBits_COLOR_ATTACHMENT, .layout = c.NriLayout_COLOR_ATTACHMENT },
+                    .layerNum = 1,
+                    .mipNum = 1,
                 };
 
-                const w: c.NriDim_t = @intCast(WINDOW_WIDTH);
-                const h: c.NriDim_t = @intCast(WINDOW_HEIGHT);
-                const h3 = h / 3;
-                // i16 y = @intCast(h3);
+                const barrier_group_desc = c.NriBarrierGroupDesc{
+                    .textureNum = 1,
+                    .textures = &texture_barriers,
+                };
+                core_interface.CmdBarrier.?(command_buffer, &barrier_group_desc);
 
-                clear_desc.value.color.f = .{ .x = 1, .w = 1 };
-                const rect1: c.NriRect = .{ .height = h3, .width = w, .x = 0, .y = 0 };
-                core_interface.CmdClearAttachments.?(command_buffer, &clear_desc, 1, &rect1, 1);
+                const attachments_desc = c.NriAttachmentsDesc{
+                    .colorNum = 1,
+                    .colors = &swapchain_texture.color_attachment,
+                };
+
+                core_interface.CmdBeginRendering.?(command_buffer, &attachments_desc);
+                {
+                    // Tracy goes here.
+
+                    var clear_desc = c.NriClearDesc{
+                        .colorAttachmentIndex = 0,
+                        .planes = c.NriPlaneBits_COLOR,
+                    };
+
+                    const w: c.NriDim_t = @intCast(WINDOW_WIDTH);
+                    const h: c.NriDim_t = @intCast(WINDOW_HEIGHT);
+                    const h3 = h / 3;
+                    const y: i16 = @intCast(h3);
+
+                    clear_desc.value.color.f = .{ .x = 1, .w = 1 };
+                    const rect1: c.NriRect = .{ .height = h3, .width = w, .x = 0, .y = 0 };
+                    core_interface.CmdClearAttachments.?(command_buffer, &clear_desc, 1, &rect1, 1);
+
+                    clear_desc.value.color.f = .{ .y = 1, .w = 1 };
+                    const rect2: c.NriRect = .{ .height = h3, .width = w, .x = 0, .y = y };
+                    core_interface.CmdClearAttachments.?(command_buffer, &clear_desc, 1, &rect2, 1);
+
+                    clear_desc.value.color.f = .{ .z = 1, .w = 1 };
+                    const rect3: c.NriRect = .{ .height = h3, .width = w, .x = 0, .y = 2 * y };
+                    core_interface.CmdClearAttachments.?(command_buffer, &clear_desc, 1, &rect3, 1);
+                }
+                core_interface.CmdEndRendering.?(command_buffer);
+
+                texture_barriers.before = texture_barriers.after;
+                texture_barriers.after = .{ .access = c.NriAccessBits_NONE, .layout = c.NriLayout_PRESENT };
+
+                core_interface.CmdBarrier.?(command_buffer, &barrier_group_desc);
             }
-            core_interface.CmdEndRendering.?(command_buffer);
+            result = core_interface.EndCommandBuffer.?(command_buffer);
+            try enri(result);
 
-            texture_barriers.before = texture_barriers.after;
-            texture_barriers.after = .{ .access = c.NriAccessBits_NONE, .layout = c.NriLayout_PRESENT };
+            // ---
 
-            core_interface.CmdBarrier.?(command_buffer, &barrier_group_desc);
+            const texture_acquired_fence = c.NriFenceSubmitDesc{
+                .fence = swapchain_acquire_semaphore,
+                .stages = c.NriStageBits_COLOR_ATTACHMENT,
+            };
+
+            const rendering_finished_fence = c.NriFenceSubmitDesc{
+                .fence = swapchain_texture.release_semaphore,
+            };
+
+            const queue_submit_desc = c.NriQueueSubmitDesc{
+                .waitFences = &texture_acquired_fence,
+                .waitFenceNum = 1,
+                .commandBuffers = &command_buffer,
+                .commandBufferNum = 1,
+                .signalFences = &rendering_finished_fence,
+                .signalFenceNum = 1,
+            };
+
+            result = core_interface.QueueSubmit.?(queue, &queue_submit_desc);
+            try enri(result);
+
+            // ---
+
+            result = swapchain_interface.QueuePresent.?(swapchain, swapchain_texture.release_semaphore);
+            try enri(result);
         }
-        result = core_interface.EndCommandBuffer.?(command_buffer);
-        try enri(result);
 
         // ---
 
-        const texture_acquired_fence = c.NriFenceSubmitDesc{
-            .fence = swapchain_acquire_semaphore,
-            .stages = c.NriStageBits_COLOR_ATTACHMENT,
-        };
+        {
+            const signal_fence = c.NriFenceSubmitDesc{
+                .fence = frame_fence,
+                .value = 1 + frame_index,
+            };
 
-        const rendering_finished_fence = c.NriFenceSubmitDesc{
-            .fence = swapchain_texture.release_semaphore,
-        };
+            const queue_submit_desc = c.NriQueueSubmitDesc{
+                .signalFences = &signal_fence,
+                .signalFenceNum = 1,
+            };
 
-        const queue_submit_desc = c.NriQueueSubmitDesc{
-            .waitFences = &texture_acquired_fence,
-            .waitFenceNum = 1,
-            .commandBuffers = &command_buffer,
-            .commandBufferNum = 1,
-            .signalFences = &rendering_finished_fence,
-            .signalFenceNum = 1,
-        };
-
-        result = core_interface.QueueSubmit.?(queue, &queue_submit_desc);
-        try enri(result);
-
-        // ---
-
-        result = swapchain_interface.QueuePresent.?(swapchain, swapchain_texture.release_semaphore);
-        try enri(result);
+            result = core_interface.QueueSubmit.?(queue, &queue_submit_desc);
+            try enri(result);
+        }
     }
 
-    // ---
-
-    {
-        const signal_fence = c.NriFenceSubmitDesc{
-            .fence = frame_fence,
-            .value = 1 + frame_index,
-        };
-
-        const queue_submit_desc = c.NriQueueSubmitDesc{
-            .signalFences = &signal_fence,
-            .signalFenceNum = 1,
-        };
-
-        result = core_interface.QueueSubmit.?(queue, &queue_submit_desc);
-        try enri(result);
-    }
-
-    // ---
-
-    while (c.glfwWindowShouldClose(window) == c.GLFW_FALSE) {
-        c.glfwPollEvents();
-    }
-
-    // ---
+    // --- [ RENDER ] [ UPDATE ] => [ CLEANUP ]
 
     {
         result = core_interface.DeviceWaitIdle.?(device);
