@@ -70,12 +70,9 @@ pub fn main() !void {
 
     std.log.info("Using NRI Version: {}", .{c.NRI_VERSION});
 
-    var result: c.NriResult = undefined;
-
     var adapterDescs: [2]c.NriAdapterDesc = undefined;
     var adapterDescsNum: u32 = adapterDescs.len;
-    result = c.nriEnumerateAdapters(&adapterDescs, &adapterDescsNum);
-    try enri(result);
+    try enri(c.nriEnumerateAdapters(&adapterDescs, &adapterDescsNum));
 
     std.log.info("{} Adapter(s) Found.", .{adapterDescsNum});
     for (adapterDescs[0..@intCast(adapterDescsNum)], 0..) |adapter, i| {
@@ -84,7 +81,7 @@ pub fn main() !void {
 
     // -- Create a device with the first adapter -- //
 
-    const device: *c.NriDevice = try N4(@TypeOf(c.nriCreateDevice), c.nriCreateDevice, .{
+    const device: *c.NriDevice = try N4(c.nriCreateDevice, .{
         &c.NriDeviceCreationDesc{
             .graphicsAPI = GRAPHICS_API,
             .enableGraphicsAPIValidation = VALIDATE_API,
@@ -99,59 +96,47 @@ pub fn main() !void {
     var core_interface: NriCoreInterface = undefined;
     try enri(c.nriGetInterface(device, "NriCoreInterface", @sizeOf(NriCoreInterface), &core_interface));
 
-    var helper_interface: c.NriHelperInterface = undefined;
-    try enri(c.nriGetInterface(device, "NriHelperInterface", @sizeOf(c.NriHelperInterface), &helper_interface));
-
     var swapchain_interface: c.NriSwapChainInterface = undefined;
     try enri(c.nriGetInterface(device, "NriSwapChainInterface", @sizeOf(c.NriSwapChainInterface), &swapchain_interface));
 
     // -- Create a graphics queue and fence -- //
 
     const queue: *c.NriQueue = try N4(
-        @TypeOf(core_interface.GetQueue.?),
         core_interface.GetQueue.?,
         .{ device, c.NriQueueType_GRAPHICS, 0 },
         error.NriCoreError,
     );
 
-    var fence_opt: ?*c.NriFence = null;
-    result = core_interface.CreateFence.?(device, 0, &fence_opt);
-    try enri(result);
+    const frame_fence: *c.NriFence = try N4(
+        core_interface.CreateFence.?,
+        .{ device, 0 },
+        error.NriCoreError,
+    );
 
-    const frame_fence = fence_opt orelse {
-        std.log.err("`fence` was null!", .{});
-        return error.NRICoreError;
-    };
-
-    // ---
+    // -- Create the window without a swapchain -- //
 
     c.glfwWindowHint(c.GLFW_CLIENT_API, c.GLFW_NO_API);
     window = c.glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "NRI Demo", null, null) orelse return error.GLFWCreateWindowFailure;
     defer c.glfwDestroyWindow(window);
 
-    // ---
+    // -- Create the swapchain, getting the platform-specific window handle -- //
 
-    const swapchain_desc = c.NriSwapChainDesc{
-        .window = .{ .windows = .{ .hwnd = c.glfwGetWin32Window(window) } },
-        .queue = queue,
-        .format = c.NriSwapChainFormat_BT709_G22_8BIT,
-        .flags = (if (VSYNC) c.NriSwapChainBits_VSYNC else c.NriSwapChainBits_NONE) | c.NriSwapChainBits_ALLOW_TEARING,
-        .width = WINDOW_WIDTH,
-        .height = WINDOW_HEIGHT,
-        .textureNum = QUEUED_FRAME_NUM + 1,
-        .queuedFrameNum = QUEUED_FRAME_NUM,
-    };
+    const swapchain: *c.NriSwapChain = try N4(
+        swapchain_interface.CreateSwapChain.?,
+        .{ device, &c.NriSwapChainDesc{
+            .window = .{ .windows = .{ .hwnd = c.glfwGetWin32Window(window) } },
+            .queue = queue,
+            .format = c.NriSwapChainFormat_BT709_G22_8BIT,
+            .flags = (if (VSYNC) c.NriSwapChainBits_VSYNC else c.NriSwapChainBits_NONE) | c.NriSwapChainBits_ALLOW_TEARING,
+            .width = WINDOW_WIDTH,
+            .height = WINDOW_HEIGHT,
+            .textureNum = QUEUED_FRAME_NUM + 1,
+            .queuedFrameNum = QUEUED_FRAME_NUM,
+        } },
+        error.NRISwapchainError,
+    );
 
-    var swapchain_opt: ?*c.NriSwapChain = null;
-    result = swapchain_interface.CreateSwapChain.?(device, &swapchain_desc, &swapchain_opt);
-    try enri(result);
-
-    const swapchain = swapchain_opt orelse {
-        std.log.err("`swapchain` was null!", .{});
-        return error.NRISwapchainError;
-    };
-
-    // ---
+    // --
 
     var swapchain_texture_num: u32 = 0;
     const c_swapchain_textures = swapchain_interface.GetSwapChainTextures.?(swapchain, &swapchain_texture_num);
@@ -163,38 +148,32 @@ pub fn main() !void {
     defer allocator.free(swapchain_texture_textures);
 
     for (0..swapchain_texture_num) |i| {
-        const texture_view_desc = c.NriTexture2DViewDesc{
-            .texture = swapchain_textures[i],
-            .viewType = c.NriTexture2DViewType_COLOR_ATTACHMENT,
-            .format = swapchain_format,
-        };
+        const color_attachment: *c.NriDescriptor = try N4(
+            core_interface.CreateTexture2DView.?,
+            .{&c.NriTexture2DViewDesc{
+                .texture = swapchain_textures[i],
+                .viewType = c.NriTexture2DViewType_COLOR_ATTACHMENT,
+                .format = swapchain_format,
+            }},
+            error.NriCoreError,
+        );
 
-        var color_attachment_opt: ?*c.NriDescriptor = null;
-        result = core_interface.CreateTexture2DView.?(&texture_view_desc, &color_attachment_opt);
-        try enri(result);
-
-        var acquire_semaphore_opt: ?*c.NriFence = null;
-        result = core_interface.CreateFence.?(device, c.NRI_SWAPCHAIN_SEMAPHORE, &acquire_semaphore_opt);
-        try enri(result);
-
-        var release_semaphore_opt: ?*c.NriFence = null;
-        result = core_interface.CreateFence.?(device, c.NRI_SWAPCHAIN_SEMAPHORE, &release_semaphore_opt);
-        try enri(result);
+        const acquire_semaphore: *c.NriFence = try N4(
+            core_interface.CreateFence.?,
+            .{ device, c.NRI_SWAPCHAIN_SEMAPHORE },
+            error.NriCoreError,
+        );
+        const release_semaphore: *c.NriFence = try N4(
+            core_interface.CreateFence.?,
+            .{ device, c.NRI_SWAPCHAIN_SEMAPHORE },
+            error.NriCoreError,
+        );
 
         swapchain_texture_textures[i] = .{
-            .acquire_semaphore = acquire_semaphore_opt orelse {
-                std.log.err("`acquire_semaphore` was null!", .{});
-                return error.NRICoreError;
-            },
-            .release_semaphore = release_semaphore_opt orelse {
-                std.log.err("`release_semaphore` was null!", .{});
-                return error.NRICoreError;
-            },
+            .acquire_semaphore = acquire_semaphore,
+            .release_semaphore = release_semaphore,
             .texture = swapchain_textures[i].?,
-            .color_attachment = color_attachment_opt orelse {
-                std.log.err("`color_attachment` was null!", .{});
-                return error.NRICoreError;
-            },
+            .color_attachment = color_attachment,
             .attachment_format = swapchain_format,
         };
     }
@@ -203,11 +182,8 @@ pub fn main() !void {
 
     var queued_frames: [QUEUED_FRAME_NUM]QueuedFrame = undefined;
     for (&queued_frames) |*qf| {
-        result = core_interface.CreateCommandAllocator.?(queue, @ptrCast(&qf.command_allocator));
-        try enri(result);
-
-        result = core_interface.CreateCommandBuffer.?(qf.command_allocator, @ptrCast(&qf.command_buffer));
-        try enri(result);
+        try enri(core_interface.CreateCommandAllocator.?(queue, @ptrCast(&qf.command_allocator)));
+        try enri(core_interface.CreateCommandBuffer.?(qf.command_allocator, @ptrCast(&qf.command_buffer)));
     }
 
     // --- [ INIT ] => [ RENDER ] [ UPDATE ]
@@ -228,15 +204,15 @@ pub fn main() !void {
         const swapchain_acquire_semaphore = swapchain_texture_textures[recycled_semaphore_index].acquire_semaphore;
 
         {
-            var current_swapchain_texture_index: u32 = 0;
-            result = swapchain_interface.AcquireNextTexture.?(swapchain, swapchain_acquire_semaphore, &current_swapchain_texture_index);
-            try enri(result);
+            const current_swapchain_texture_index: u32 = try N(
+                swapchain_interface.AcquireNextTexture.?,
+                .{ swapchain, swapchain_acquire_semaphore },
+            );
 
             const swapchain_texture = &swapchain_texture_textures[current_swapchain_texture_index];
 
             const command_buffer = queued_frame.command_buffer;
-            result = core_interface.BeginCommandBuffer.?(command_buffer, null);
-            try enri(result);
+            try enri(core_interface.BeginCommandBuffer.?(command_buffer, null));
             {
                 var texture_barriers = c.NriTextureBarrierDesc{
                     .texture = swapchain_texture.texture,
@@ -287,8 +263,7 @@ pub fn main() !void {
 
                 core_interface.CmdBarrier.?(command_buffer, &barrier_group_desc);
             }
-            result = core_interface.EndCommandBuffer.?(command_buffer);
-            try enri(result);
+            try enri(core_interface.EndCommandBuffer.?(command_buffer));
 
             // ---
 
@@ -310,13 +285,11 @@ pub fn main() !void {
                 .signalFenceNum = 1,
             };
 
-            result = core_interface.QueueSubmit.?(queue, &queue_submit_desc);
-            try enri(result);
+            try enri(core_interface.QueueSubmit.?(queue, &queue_submit_desc));
 
             // ---
 
-            result = swapchain_interface.QueuePresent.?(swapchain, swapchain_texture.release_semaphore);
-            try enri(result);
+            try enri(swapchain_interface.QueuePresent.?(swapchain, swapchain_texture.release_semaphore));
         }
 
         // ---
@@ -332,16 +305,14 @@ pub fn main() !void {
                 .signalFenceNum = 1,
             };
 
-            result = core_interface.QueueSubmit.?(queue, &queue_submit_desc);
-            try enri(result);
+            try enri(core_interface.QueueSubmit.?(queue, &queue_submit_desc));
         }
     }
 
     // --- [ RENDER ] [ UPDATE ] => [ CLEANUP ]
 
     {
-        result = core_interface.DeviceWaitIdle.?(device);
-        try enri(result);
+        try enri(core_interface.DeviceWaitIdle.?(device));
 
         for (queued_frames) |qf| {
             core_interface.DestroyCommandBuffer.?(qf.command_buffer);
@@ -412,14 +383,13 @@ pub fn getLastParameterPointerTypeUnNulled(comptime Fn: type) type {
 /// and compares the return value the function against `Success`, throwing an
 /// error if they do not match.
 pub fn callC(
-    comptime Fn: type,
-    comptime success: getReturnType(extractFn(Fn)),
-    @"fn": Fn,
+    @"fn": anytype,
+    comptime success: getReturnType(extractFn(@TypeOf(@"fn"))),
     args: anytype,
-) !getLastParameterPointerType(extractFn(Fn)) {
-    const ti = @typeInfo(extractFn(Fn)).@"fn";
+) !getLastParameterPointerType(extractFn(@TypeOf(@"fn"))) {
+    const ti = @typeInfo(extractFn(@TypeOf(@"fn"))).@"fn";
 
-    var out: getLastParameterPointerType(extractFn(Fn)) = undefined;
+    var out: getLastParameterPointerType(extractFn(@TypeOf(@"fn"))) = undefined;
     const ret: ti.return_type.? = @call(.auto, @"fn", args ++ .{@as(ti.params[ti.params.len - 1].type.?, @ptrCast(&out))});
 
     if (ret == success) {
@@ -432,34 +402,31 @@ pub fn callC(
 /// Same as `callC` but also errors if the output is null. Expects the outpoint
 /// pointer type to be nullable.
 pub fn callC4(
-    comptime Fn: type,
-    comptime success: getReturnType(Fn),
-    @"fn": Fn,
+    @"fn": anytype,
+    comptime success: getReturnType(@TypeOf(@"fn")),
     args: anytype,
-) !getLastParameterPointerTypeUnNulled(Fn) {
-    return try callC(Fn, success, @"fn", args) orelse error.Failure;
+) !getLastParameterPointerTypeUnNulled(@TypeOf(@"fn")) {
+    return try callC(@"fn", success, args) orelse error.Failure;
 }
 
 // ---
 
 /// `callC` but for NRI functions.
 pub fn N(
-    comptime Fn: type,
-    @"fn": Fn,
+    @"fn": anytype,
     args: anytype,
-) !getLastParameterPointerType(Fn) {
-    return try callC(Fn, c.NriResult_SUCCESS, @"fn", args);
+) !getLastParameterPointerType(@TypeOf(@"fn")) {
+    return try callC(@"fn", c.NriResult_SUCCESS, args);
 }
 
 /// `callC4` but for NRI functions.
 pub fn N4(
-    comptime Fn: type,
-    @"fn": Fn,
+    @"fn": anytype,
     args: anytype,
     err: anytype,
-) !getLastParameterPointerTypeUnNulled(Fn) {
-    return try N(Fn, @"fn", args) orelse {
-        std.log.err("'{s}' was null >:(", .{@typeName(getLastParameterPointerTypeUnNulled(Fn))});
+) !getLastParameterPointerTypeUnNulled(@TypeOf(@"fn")) {
+    return try N(@"fn", args) orelse {
+        std.log.err("'{s}' was null >:(", .{@typeName(getLastParameterPointerTypeUnNulled(@TypeOf(@"fn")))});
         return err;
     };
 }
