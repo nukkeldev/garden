@@ -2,6 +2,8 @@
 
 const std = @import("std");
 
+const tracy = @import("tracy.zig");
+
 const c = @cImport({
     @cDefine("MIDL_INTERFACE", "struct");
 
@@ -233,6 +235,8 @@ pub fn main() !void {
         core_interface.Wait.?(frame_fence, if (frame_index >= QUEUED_FRAME_NUM) 1 + frame_index - QUEUED_FRAME_NUM else 0);
         core_interface.ResetCommandAllocator.?(queued_frame.command_allocator);
 
+        tracy.frameMark();
+
         const recycled_semaphore_index = frame_index % swapchain_texture_textures.len;
         const swapchain_acquire_semaphore = swapchain_texture_textures[recycled_semaphore_index].acquire_semaphore;
 
@@ -267,8 +271,6 @@ pub fn main() !void {
 
                 core_interface.CmdBeginRendering.?(command_buffer, &attachments_desc);
                 {
-                    // Tracy goes here.
-
                     var clear_desc = c.NriClearDesc{
                         .colorAttachmentIndex = 0,
                         .planes = c.NriPlaneBits_COLOR,

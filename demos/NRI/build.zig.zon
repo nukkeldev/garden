@@ -1,0 +1,20 @@
+.{
+    .name = .NRI,
+    .version = "0.0.0",
+    .minimum_zig_version = "0.14.1",
+
+    .fingerprint = 0x2c8bf3a25d92518, // Changing this has security and trust implications.
+
+    .dependencies = .{
+        // Profiling
+        .tracy = .{
+            .url = "git+https://github.com/wolfpld/tracy.git#abbc35793e245510a9b33288cfdc2d68a894c535",
+            .hash = "N-V-__8AAJNvPwGqa0WLAedW1M6YWG6xwzU5HD-UhrQ1Z7Eh",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
