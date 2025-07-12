@@ -43,7 +43,8 @@ const VK_BINDING_OFFSETS = c.NriVKBindingOffsets{
     .constantBufferOffset = 32,
     .storageTextureAndBufferOffset = 64,
 };
-const QUEUED_FRAME_NUM = 2;
+const VSYNC = false;
+const QUEUED_FRAME_NUM = if (VSYNC) 2 else 3;
 
 const WINDOW_WIDTH = 1024;
 const WINDOW_HEIGHT = 1024;
@@ -88,9 +89,7 @@ pub fn main() !void {
         .enableGraphicsAPIValidation = VALIDATE_API,
         .enableNRIValidation = VALIDATE_NRI,
         .vkBindingOffsets = VK_BINDING_OFFSETS,
-        // .vkExtensions = ...,
         .adapterDesc = &adapterDescs[0],
-        // .allocationCallbacks = ...,
     };
     var device_opt: ?*c.NriDevice = null;
     result = c.nriCreateDevice(&device_creation_desc, &device_opt);
@@ -139,6 +138,7 @@ pub fn main() !void {
 
     // ---
 
+    c.glfwWindowHint(c.GLFW_CLIENT_API, c.GLFW_NO_API);
     window = c.glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "NRI Demo", null, null) orelse return error.GLFWCreateWindowFailure;
     defer c.glfwDestroyWindow(window);
 
@@ -148,7 +148,7 @@ pub fn main() !void {
         .window = .{ .windows = .{ .hwnd = c.glfwGetWin32Window(window) } },
         .queue = queue,
         .format = c.NriSwapChainFormat_BT709_G22_8BIT,
-        .flags = c.NriSwapChainBits_VSYNC | c.NriSwapChainBits_ALLOW_TEARING,
+        .flags = (if (VSYNC) c.NriSwapChainBits_VSYNC else c.NriSwapChainBits_NONE) | c.NriSwapChainBits_ALLOW_TEARING,
         .width = WINDOW_WIDTH,
         .height = WINDOW_HEIGHT,
         .textureNum = QUEUED_FRAME_NUM + 1,
