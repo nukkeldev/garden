@@ -1,0 +1,14 @@
+.{
+    .name = .ffi_experiments,
+    .version = "0.0.0",
+    .minimum_zig_version = "0.14.1",
+
+    .fingerprint = 0x517480bd54c4471d, // Changing this has security and trust implications.
+
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
