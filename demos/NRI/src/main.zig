@@ -91,11 +91,7 @@ pub fn main() !void {
         .vkBindingOffsets = VK_BINDING_OFFSETS,
         .adapterDesc = &adapterDescs[0],
     };
-    var device_opt: ?*c.NriDevice = null;
-    result = c.nriCreateDevice(&device_creation_desc, &device_opt);
-    try enri(result);
-
-    const device = device_opt orelse {
+    const device: *c.NriDevice = N4(c.nriCreateDevice, .{&device_creation_desc}) catch {
         std.log.err("`device` was null!", .{});
         return error.NRIDeviceError;
     };
@@ -387,6 +383,85 @@ fn enri(result: c.NriResult) !void {
         std.log.err("nriEnumerateAdapters(): {}", .{result});
         return error.NriError;
     }
+}
+
+// -- Beloved Comptime -- //
+
+/// Returns the return type of a given function.
+pub fn getReturnType(comptime @"fn": anytype) type {
+    return @typeInfo(@TypeOf(@"fn")).@"fn".return_type.?;
+}
+
+/// Returns the return type of a given function.
+pub fn getLastParameterPointerType(comptime @"fn": anytype) type {
+    const ti = @typeInfo(@TypeOf(@"fn")).@"fn";
+    return @typeInfo(ti.params[ti.params.len - 1].type.?).pointer.child;
+}
+
+/// Returns the return type of a given function.
+pub fn getLastParameterPointerTypeUnNulled(comptime @"fn": anytype) type {
+    const ti = @typeInfo(@TypeOf(@"fn")).@"fn";
+    return @typeInfo(@typeInfo(ti.params[ti.params.len - 1].type.?).pointer.child).optional.child;
+}
+
+// -- 💥 -- //
+
+/// Invokes a function pointer with the supplied arguments where the last of the
+/// parameters is a output pointer to `Target`. Extracts the value of target
+/// and compares the return value the function against `Success`, throwing an
+/// error if they do not match.
+pub fn callC(
+    comptime @"fn": anytype,
+    comptime success: getReturnType(@"fn"),
+    args: anytype,
+) !getLastParameterPointerType(@"fn") {
+    const Fn = @typeInfo(@TypeOf(@"fn")).@"fn";
+
+    var out: getLastParameterPointerType(@"fn") = undefined;
+    const ret: Fn.return_type.? = @call(.auto, @"fn", args ++ .{@as(Fn.params[Fn.params.len - 1].type.?, @ptrCast(&out))});
+
+    if (ret == success) {
+        return out;
+    } else {
+        return error.Failure;
+    }
+}
+
+/// Same as `callC` but also errors if the output is null. Expects the outpoint
+/// pointer type to be nullable.
+pub fn callC4(
+    comptime @"fn": anytype,
+    comptime success: getReturnType(@"fn"),
+    args: anytype,
+) !getLastParameterPointerTypeUnNulled(@"fn") {
+    const Fn = @typeInfo(@TypeOf(@"fn")).@"fn";
+
+    var out: getLastParameterPointerType(@"fn") = undefined;
+    const ret: Fn.return_type.? = @call(.auto, @"fn", args ++ .{@as(Fn.params[Fn.params.len - 1].type.?, @ptrCast(&out))});
+
+    if (ret != success or out == null) {
+        return error.Failure;
+    } else {
+        return out.?;
+    }
+}
+
+// ---
+
+/// `callC` but for NRI functions.
+pub fn N(
+    comptime @"fn": anytype,
+    args: anytype,
+) !getLastParameterPointerType(@"fn") {
+    return callC(@"fn", c.NriResult_SUCCESS, args);
+}
+
+/// `callC4` but for NRI functions.
+pub fn N4(
+    comptime @"fn": anytype,
+    args: anytype,
+) !getLastParameterPointerTypeUnNulled(@"fn") {
+    return callC4(@"fn", c.NriResult_SUCCESS, args);
 }
 
 // -- Ingenuity -- //
