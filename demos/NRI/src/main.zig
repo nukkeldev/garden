@@ -59,14 +59,14 @@ pub fn main() !void {
 
     const allocator = if (DEBUG) debug_allocator.allocator() else std.heap.smp_allocator;
 
-    // ---
+    // -- Initialize GLFW -- //
 
     _ = c.glfwSetErrorCallback(glfwErrorCallback);
 
     if (c.glfwInit() == c.GLFW_FALSE) return error.GLFWInitFailure;
     defer c.glfwTerminate();
 
-    // --- [ INIT ]
+    // -- Probe for our GPU Adapters -- //
 
     std.log.info("Using NRI Version: {}", .{c.NRI_VERSION});
 
@@ -82,46 +82,37 @@ pub fn main() !void {
         std.log.info("Adapter {}: '{s}'", .{ i, adapter.name });
     }
 
-    // ---
+    // -- Create a device with the first adapter -- //
 
-    const device_creation_desc = c.NriDeviceCreationDesc{
-        .graphicsAPI = GRAPHICS_API,
-        .enableGraphicsAPIValidation = VALIDATE_API,
-        .enableNRIValidation = VALIDATE_NRI,
-        .vkBindingOffsets = VK_BINDING_OFFSETS,
-        .adapterDesc = &adapterDescs[0],
-    };
-    const device: *c.NriDevice = N4(c.nriCreateDevice, .{&device_creation_desc}) catch {
-        std.log.err("`device` was null!", .{});
-        return error.NRIDeviceError;
-    };
+    const device: *c.NriDevice = try N4(@TypeOf(c.nriCreateDevice), c.nriCreateDevice, .{
+        &c.NriDeviceCreationDesc{
+            .graphicsAPI = GRAPHICS_API,
+            .enableGraphicsAPIValidation = VALIDATE_API,
+            .enableNRIValidation = VALIDATE_NRI,
+            .vkBindingOffsets = VK_BINDING_OFFSETS,
+            .adapterDesc = &adapterDescs[0],
+        },
+    }, error.NRICoreError);
 
-    // ---
+    // -- Get the interface VTables for core and extension fns -- //
 
     var core_interface: NriCoreInterface = undefined;
-    result = c.nriGetInterface(device, "NriCoreInterface", @sizeOf(NriCoreInterface), &core_interface);
-    try enri(result);
+    try enri(c.nriGetInterface(device, "NriCoreInterface", @sizeOf(NriCoreInterface), &core_interface));
 
     var helper_interface: c.NriHelperInterface = undefined;
-    result = c.nriGetInterface(device, "NriHelperInterface", @sizeOf(c.NriHelperInterface), &helper_interface);
-    try enri(result);
+    try enri(c.nriGetInterface(device, "NriHelperInterface", @sizeOf(c.NriHelperInterface), &helper_interface));
 
     var swapchain_interface: c.NriSwapChainInterface = undefined;
-    result = c.nriGetInterface(device, "NriSwapChainInterface", @sizeOf(c.NriSwapChainInterface), &swapchain_interface);
-    try enri(result);
+    try enri(c.nriGetInterface(device, "NriSwapChainInterface", @sizeOf(c.NriSwapChainInterface), &swapchain_interface));
 
-    // ---
+    // -- Create a graphics queue and fence -- //
 
-    var graphics_queue_opt: ?*c.NriQueue = null;
-    result = core_interface.GetQueue.?(device, c.NriQueueType_GRAPHICS, 0, &graphics_queue_opt);
-    try enri(result);
-
-    const queue = graphics_queue_opt orelse {
-        std.log.err("`queue` was null!", .{});
-        return error.NRICoreError;
-    };
-
-    // ---
+    const queue: *c.NriQueue = try N4(
+        @TypeOf(core_interface.GetQueue.?),
+        core_interface.GetQueue.?,
+        .{ device, c.NriQueueType_GRAPHICS, 0 },
+        error.NriCoreError,
+    );
 
     var fence_opt: ?*c.NriFence = null;
     result = core_interface.CreateFence.?(device, 0, &fence_opt);
@@ -387,20 +378,30 @@ fn enri(result: c.NriResult) !void {
 
 // -- Beloved Comptime -- //
 
-/// Returns the return type of a given function.
-pub fn getReturnType(comptime @"fn": anytype) type {
-    return @typeInfo(@TypeOf(@"fn")).@"fn".return_type.?;
+/// Extracts the function type from a optional function pointer type or a
+/// regular one.
+pub fn extractFn(comptime Fn: type) type {
+    switch (@typeInfo(Fn)) {
+        // *[const] fn
+        .pointer => |p| return p.child,
+        else => return Fn,
+    }
 }
 
 /// Returns the return type of a given function.
-pub fn getLastParameterPointerType(comptime @"fn": anytype) type {
-    const ti = @typeInfo(@TypeOf(@"fn")).@"fn";
+pub fn getReturnType(comptime Fn: type) type {
+    return @typeInfo(extractFn(Fn)).@"fn".return_type.?;
+}
+
+/// Returns the return type of a given function.
+pub fn getLastParameterPointerType(comptime Fn: type) type {
+    const ti = @typeInfo(extractFn(Fn)).@"fn";
     return @typeInfo(ti.params[ti.params.len - 1].type.?).pointer.child;
 }
 
 /// Returns the return type of a given function.
-pub fn getLastParameterPointerTypeUnNulled(comptime @"fn": anytype) type {
-    const ti = @typeInfo(@TypeOf(@"fn")).@"fn";
+pub fn getLastParameterPointerTypeUnNulled(comptime Fn: type) type {
+    const ti = @typeInfo(extractFn(Fn)).@"fn";
     return @typeInfo(@typeInfo(ti.params[ti.params.len - 1].type.?).pointer.child).optional.child;
 }
 
@@ -411,14 +412,15 @@ pub fn getLastParameterPointerTypeUnNulled(comptime @"fn": anytype) type {
 /// and compares the return value the function against `Success`, throwing an
 /// error if they do not match.
 pub fn callC(
-    comptime @"fn": anytype,
-    comptime success: getReturnType(@"fn"),
+    comptime Fn: type,
+    comptime success: getReturnType(extractFn(Fn)),
+    @"fn": Fn,
     args: anytype,
-) !getLastParameterPointerType(@"fn") {
-    const Fn = @typeInfo(@TypeOf(@"fn")).@"fn";
+) !getLastParameterPointerType(extractFn(Fn)) {
+    const ti = @typeInfo(extractFn(Fn)).@"fn";
 
-    var out: getLastParameterPointerType(@"fn") = undefined;
-    const ret: Fn.return_type.? = @call(.auto, @"fn", args ++ .{@as(Fn.params[Fn.params.len - 1].type.?, @ptrCast(&out))});
+    var out: getLastParameterPointerType(extractFn(Fn)) = undefined;
+    const ret: ti.return_type.? = @call(.auto, @"fn", args ++ .{@as(ti.params[ti.params.len - 1].type.?, @ptrCast(&out))});
 
     if (ret == success) {
         return out;
@@ -430,38 +432,36 @@ pub fn callC(
 /// Same as `callC` but also errors if the output is null. Expects the outpoint
 /// pointer type to be nullable.
 pub fn callC4(
-    comptime @"fn": anytype,
-    comptime success: getReturnType(@"fn"),
+    comptime Fn: type,
+    comptime success: getReturnType(Fn),
+    @"fn": Fn,
     args: anytype,
-) !getLastParameterPointerTypeUnNulled(@"fn") {
-    const Fn = @typeInfo(@TypeOf(@"fn")).@"fn";
-
-    var out: getLastParameterPointerType(@"fn") = undefined;
-    const ret: Fn.return_type.? = @call(.auto, @"fn", args ++ .{@as(Fn.params[Fn.params.len - 1].type.?, @ptrCast(&out))});
-
-    if (ret != success or out == null) {
-        return error.Failure;
-    } else {
-        return out.?;
-    }
+) !getLastParameterPointerTypeUnNulled(Fn) {
+    return try callC(Fn, success, @"fn", args) orelse error.Failure;
 }
 
 // ---
 
 /// `callC` but for NRI functions.
 pub fn N(
-    comptime @"fn": anytype,
+    comptime Fn: type,
+    @"fn": Fn,
     args: anytype,
-) !getLastParameterPointerType(@"fn") {
-    return callC(@"fn", c.NriResult_SUCCESS, args);
+) !getLastParameterPointerType(Fn) {
+    return try callC(Fn, c.NriResult_SUCCESS, @"fn", args);
 }
 
 /// `callC4` but for NRI functions.
 pub fn N4(
-    comptime @"fn": anytype,
+    comptime Fn: type,
+    @"fn": Fn,
     args: anytype,
-) !getLastParameterPointerTypeUnNulled(@"fn") {
-    return callC4(@"fn", c.NriResult_SUCCESS, args);
+    err: anytype,
+) !getLastParameterPointerTypeUnNulled(Fn) {
+    return try N(Fn, @"fn", args) orelse {
+        std.log.err("'{s}' was null >:(", .{@typeName(getLastParameterPointerTypeUnNulled(Fn))});
+        return err;
+    };
 }
 
 // -- Ingenuity -- //
